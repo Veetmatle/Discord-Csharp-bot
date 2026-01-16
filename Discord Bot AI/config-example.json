@@ -1,7 +1,10 @@
 ﻿{
   "DiscordToken": "Your_Discord_Bot_Token_Here",
   "GeminiApiKey": "Your_Gemini_API_Key_Here",
-  "ServerID_1": "Your_Server_ID_1_Here",
-  "ServerID_2": "Your_Server_ID_2_Here (if you want to add a second server)",
-  "ServerID_3": "Your_Server_ID_3_Here (if you want to add a third server)"
+  "RiotApiKey": "Your_Riot_API_Key_Here",
+  "ServerIds": [
+    "Your_First_Server_ID_Here",
+    "Your_Second_Server_ID_Here",
+    "Your_Third_Server_ID_Here"
+  ]
 }

@@ -1,4 +1,6 @@
-﻿namespace Discord_Bot_AI;
+﻿using Discord_Bot_AI.Services;
+
+namespace Discord_Bot_AI;
 
 public class Program
 {

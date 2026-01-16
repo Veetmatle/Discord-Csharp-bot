@@ -1,7 +1,8 @@
 ﻿using System.Text;
+using Discord_Bot_AI.Models.Gemini;
 using Newtonsoft.Json;
 
-namespace Discord_Bot_AI;
+namespace Discord_Bot_AI.Services;
 
 public class GeminiService(string apiKey)
 {
@@ -46,17 +47,3 @@ public class GeminiService(string apiKey)
     }
 }
 
-public class GeminiRequest
-{
-    public Content[] contents { get; set; }
-}
-
-public class Content
-{
-    public Part[] parts { get; set; }
-}
-
-public class Part
-{
-    public string text { get; set; }
-}
