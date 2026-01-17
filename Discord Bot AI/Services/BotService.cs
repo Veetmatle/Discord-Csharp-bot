@@ -18,7 +18,6 @@ public class BotService
     private readonly string _promptPrefix =
         "\n Answer in Polish in max 100 words. Be brief and precise unless instructions say otherwise.";
 
-
     public BotService()
     {
         var config = new DiscordSocketConfig { GatewayIntents = GatewayIntents.AllUnprivileged | GatewayIntents.MessageContent };
@@ -35,30 +34,19 @@ public class BotService
         _gemini = new GeminiService(_config.GeminiApiKey);
         _riot = new RiotService(_config.RiotToken);
         
-        if (_config.ServerIds.Any())
+        foreach (var id in _config.ServerIds)
         {
-            foreach (var id in _config.ServerIds)
+            if (ulong.TryParse(id, out ulong guildId))
             {
-                if (ulong.TryParse(id, out ulong guildId))
-                {
-                    _guildIds.Add(guildId);
-                }
+                _guildIds.Add(guildId);
             }
         }
 
         await _client.LoginAsync(TokenType.Bot, _config.DiscordToken);
         await _client.StartAsync();
+        _ = StartMatchMonitoringAsync();
+        
         await Task.Delay(-1);
-    }
-
-    private async Task LoadConfigAsync()
-    {
-        if (!File.Exists("config.json"))
-            throw new FileNotFoundException();
-
-        string json = await File.ReadAllTextAsync("config.json");
-        _config = JsonConvert.DeserializeObject<Config>(json)
-                  ?? throw new Exception("Deserialization error.");
     }
 
     private async Task OnReadyAsync()
@@ -75,11 +63,15 @@ public class BotService
                 .WithName("info")
                 .WithDescription("show info about bot")
                 .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("unregister")
+                .WithDescription("Use to unregister your League of Legends account")
+                .WithType(ApplicationCommandOptionType.SubCommand))
             .AddOption(new SlashCommandOptionBuilder() 
-                .WithName("register lol account")
-                .WithDescription("Register your League of Legends account. Provide in-game nick and tag.")
+                .WithName("register")
+                .WithDescription("Register your League of Legends account")
                 .WithType(ApplicationCommandOptionType.SubCommand)
-                .AddOption("nick", ApplicationCommandOptionType.String, "Your nick in game.", isRequired: true)
+                .AddOption("nick", ApplicationCommandOptionType.String, "Your nick in game", isRequired: true)
                 .AddOption("tag", ApplicationCommandOptionType.String, "Your tag (eg. EUNE, PL1)", isRequired: true))
             .Build();
 
@@ -117,6 +109,23 @@ public class BotService
             case "register":
                 await RegisterRiotAccountAsync(command, subCommand); 
                 break;
+            case "unregister":
+                await UnregisterRiotAccountAsync(command);
+                break;
+        }
+    }
+    
+    private async Task UnregisterRiotAccountAsync(SocketSlashCommand command)
+    {
+        await command.DeferAsync(ephemeral: true);
+        bool removed = _userRegistry.RemoveUser(command.User.Id);
+        if (removed)
+        {
+            await command.FollowupAsync("Your account has been unregistered successfully.");
+        }
+        else
+        {
+            await command.FollowupAsync("No corresponding account found to unregister.");
         }
     }
 
@@ -124,11 +133,9 @@ public class BotService
     {
         await command.DeferAsync();
 
-        var question = subCommand.Options.First().Value.ToString() ?? "Zwróć odpowiedź: Brak pytania";
+        var queryOption = subCommand.Options.FirstOrDefault(o => o.Name == "query");
+        var question = queryOption?.Value?.ToString() ?? "No question provided";
         var answer = await _gemini!.GetAnswerAsync(question + this._promptPrefix);
-
-        Console.WriteLine(question);
-        Console.WriteLine(answer);
 
         string response = $"**Question:**\n {question}\n**Answer:**\n {answer}";
         await command.FollowupAsync(response);
@@ -136,29 +143,85 @@ public class BotService
 
     private async Task RegisterRiotAccountAsync(SocketSlashCommand command, SocketSlashCommandDataOption subCommand)
     {
-        if (_riot == null)
-            return;
+        if (_riot == null) return;
         
         await command.DeferAsync();
         
-        var nick = subCommand.Options.First(o => o.Name == "nick").Value.ToString();
-        var tag = subCommand.Options.First(o => o.Name == "tag").Value.ToString();
-        if (nick == null || tag == null)
+        var nick = subCommand.Options.FirstOrDefault(o => o.Name == "nick")?.Value?.ToString();
+        var tag = subCommand.Options.FirstOrDefault(o => o.Name == "tag")?.Value?.ToString();
+
+        if (string.IsNullOrEmpty(nick) || string.IsNullOrEmpty(tag))
         {
             await command.FollowupAsync("Invalid nick or tag.");
             return;
         }
         
-        var account = await _riot!.GetAccountAsync(nick, tag);
+        var account = await _riot.GetAccountAsync(nick, tag);
         if (account != null)
         {
             _userRegistry.RegisterUser(command.User.Id, account);
-            await command.FollowupAsync($"Operation went well: **{account.gameName}#{account.tagLine}**.");
+            await command.FollowupAsync($"Account registered: **{account.gameName}#{account.tagLine}**.");
         }
         else
         {
-            await command.FollowupAsync($"Account not found: **{nick}#{tag}**. Validate input data.");
+            await command.FollowupAsync($"Account not found: **{nick}#{tag}**.");
         }
     }
-}
+    
+    private async Task StartMatchMonitoringAsync()
+    {
+        using PeriodicTimer timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
+        while (await timer.WaitForNextTickAsync())
+        {
+            try
+            {
+                await CheckForNewMatchesAsync();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"Monitoring error: {ex.Message}");
+            }
+        }
+    }
 
+    private async Task CheckForNewMatchesAsync()
+    {
+        var users = _userRegistry.GetAllTrackedUsers();
+        if (!users.Any()) return;
+
+        foreach (var entry in users)
+        {
+            var account = entry.Value;
+            string? currentMatchId = await _riot!.GetLatestMatchIdAsync(account.puuid);
+            
+            if (!string.IsNullOrEmpty(currentMatchId) && currentMatchId != account.LastMatchId)
+            {
+                var matchData = await _riot.GetMatchDetailsAsync(currentMatchId);
+                if (matchData != null)
+                {
+                    account.LastMatchId = currentMatchId;
+                    _userRegistry.RegisterUser(entry.Key, account); 
+                    await NotifyMatchFinishedAsync(account);
+                }
+            }
+        }
+    }
+    
+    private async Task NotifyMatchFinishedAsync(RiotAccount account)
+    {
+        var guild = _client.GetGuild(_guildIds.FirstOrDefault()); 
+        var channel = guild?.TextChannels.FirstOrDefault(c => c.Name == "bot"); 
+
+        if (channel != null)
+        {
+            await channel.SendMessageAsync($"**{account.gameName}** finished a match.");
+        }
+    }
+
+    private async Task LoadConfigAsync()
+    {
+        if (!File.Exists("config.json")) throw new FileNotFoundException();
+        string json = await File.ReadAllTextAsync("config.json");
+        _config = JsonConvert.DeserializeObject<Config>(json) ?? throw new Exception("Config error");
+    }
+}

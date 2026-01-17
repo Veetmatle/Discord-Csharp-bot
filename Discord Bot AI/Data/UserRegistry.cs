@@ -18,6 +18,16 @@ public class UserRegistry
         _userMap[discordUserId] = account;
         Save();
     }
+    
+    public bool RemoveUser(ulong discordUserId)
+    {
+        if (_userMap.Remove(discordUserId))
+        {
+            Save(); 
+            return true;
+        }
+        return false;
+    }
 
     public RiotAccount? GetAccount(ulong discordUserId)
     {

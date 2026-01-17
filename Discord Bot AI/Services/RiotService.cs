@@ -21,17 +21,38 @@ public class RiotService
     }
     
     /// <summary>
-    /// Method is used to provide Riot Account information based on in-game nickname and tag line.
+    /// Method is used to provide Riot Account information based on in-game nickname and tag.
     /// </summary>
-    public async Task<RiotAccount?> GetAccountAsync(string gameNickName, string tagLine)
+    public async Task<RiotAccount?> GetAccountAsync(string gameNickName, string tag)
     {
-        var url = $"{BaseUrl}/by-riot-id/{gameNickName}/{tagLine}";
+        var url = $"{BaseUrl}/by-riot-id/{gameNickName}/{tag}";
         var response = await _httpClient.GetAsync(url);
 
         if (!response.IsSuccessStatusCode)
             return null;
         
         return await response.Content.ReadFromJsonAsync<RiotAccount>();
+    }
+
+    public async Task<string?> GetLatestMatchIdAsync(string puuid)
+    {
+        var url = $"{BaseUrl}/by-puuid/{puuid}/ids?start=0&count=1";
+    
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+
+        var matchIds = await response.Content.ReadFromJsonAsync<List<string>>();
+        return matchIds?.FirstOrDefault();
+    }
+    
+    public async Task<MatchData?> GetMatchDetailsAsync(string matchId)
+    {
+        var url = $"{BaseUrl}/{matchId}";
+    
+        var response = await _httpClient.GetAsync(url);
+        if (!response.IsSuccessStatusCode) return null;
+
+        return await response.Content.ReadFromJsonAsync<MatchData>();
     }
 }
 
