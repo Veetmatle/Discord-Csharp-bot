@@ -1,4 +1,4 @@
-﻿namespace Discord_Bot_AI.Strategy.Renderering;
+﻿namespace Discord_Bot_AI.Strategy.Rendering;
 
 public class HtmlRenderer
 {

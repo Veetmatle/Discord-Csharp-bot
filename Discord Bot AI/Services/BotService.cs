@@ -2,6 +2,8 @@
 using Discord;
 using Discord.WebSocket;
 using Discord_Bot_AI.Models;
+using Discord_Bot_AI.Strategy.Notification;
+using Discord_Bot_AI.Strategy.Rendering;
 using Newtonsoft.Json;
 
 namespace Discord_Bot_AI.Services;
@@ -14,6 +16,8 @@ public class BotService
     private RiotService? _riot;
     private readonly List<ulong> _guildIds = new();
     private readonly UserRegistry _userRegistry = new();
+    private IMatchNotification? _notificationStrategy;
+    private IGameSummaryRenderer? _renderer;
     
     private readonly string _promptPrefix =
         "\n Answer in Polish in max 100 words. Be brief and precise unless instructions say otherwise.";
@@ -33,6 +37,7 @@ public class BotService
 
         _gemini = new GeminiService(_config.GeminiApiKey);
         _riot = new RiotService(_config.RiotToken);
+        _notificationStrategy = new PollingStrategy(_riot, _userRegistry, NotifyMatchFinishedAsync);
         
         foreach (var id in _config.ServerIds)
         {
@@ -44,7 +49,8 @@ public class BotService
 
         await _client.LoginAsync(TokenType.Bot, _config.DiscordToken);
         await _client.StartAsync();
-        _ = StartMatchMonitoringAsync();
+        
+        _ = _notificationStrategy.StartMonitoringAsync();
         
         await Task.Delay(-1);
     }
@@ -168,53 +174,15 @@ public class BotService
         }
     }
     
-    private async Task StartMatchMonitoringAsync()
-    {
-        using PeriodicTimer timer = new PeriodicTimer(TimeSpan.FromMinutes(10));
-        while (await timer.WaitForNextTickAsync())
-        {
-            try
-            {
-                await CheckForNewMatchesAsync();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"Monitoring error: {ex.Message}");
-            }
-        }
-    }
-
-    private async Task CheckForNewMatchesAsync()
-    {
-        var users = _userRegistry.GetAllTrackedUsers();
-        if (!users.Any()) return;
-
-        foreach (var entry in users)
-        {
-            var account = entry.Value;
-            string? currentMatchId = await _riot!.GetLatestMatchIdAsync(account.puuid);
-            
-            if (!string.IsNullOrEmpty(currentMatchId) && currentMatchId != account.LastMatchId)
-            {
-                var matchData = await _riot.GetMatchDetailsAsync(currentMatchId);
-                if (matchData != null)
-                {
-                    account.LastMatchId = currentMatchId;
-                    _userRegistry.RegisterUser(entry.Key, account); 
-                    await NotifyMatchFinishedAsync(account);
-                }
-            }
-        }
-    }
-    
-    private async Task NotifyMatchFinishedAsync(RiotAccount account)
+    private async Task NotifyMatchFinishedAsync(RiotAccount account, MatchData matchData)
     {
         var guild = _client.GetGuild(_guildIds.FirstOrDefault()); 
         var channel = guild?.TextChannels.FirstOrDefault(c => c.Name == "bot"); 
 
-        if (channel != null)
+        if (channel != null && _renderer != null)
         {
-            await channel.SendMessageAsync($"**{account.gameName}** finished a match.");
+            using var imageStream = await _renderer.RenderSummaryAsync(account, matchData);
+            await channel.SendFileAsync(imageStream, "match.png", $"**{account.gameName}** finished a match!");
         }
     }
 
