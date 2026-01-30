@@ -466,9 +466,11 @@ The application is a production-ready Discord bot with:
 10. Image rendering with concurrency control
 11. Asset caching with concurrent-safe downloads
 
-The architecture follows SOLID principles:
-- Single Responsibility: Each class has one purpose
-- Open/Closed: Strategy pattern allows extension
-- Liskov Substitution: Interfaces used throughout
-- Interface Segregation: Small, focused interfaces
-- Dependency Inversion: Dependencies injected, not created
+Have fun testing! To get everything running smoothly, remember these final steps:
+* Discord Developer Portal: Create a new application and a bot account at the Discord Developer Portal.
+* Enable Message Intent: In the Bot tab, you MUST enable the Message Content Intent—the bot requires this to recognize and process your slash commands.
+* Invite to Server: Use the OAuth2 URL generator to invite the bot to your server. Ensure it has permissions to Send Messages, Attach Files, and Use Slash Commands.
+* The "bot" Channel: Create a text channel named exactly "bot" on your server. The bot specifically looks for this name to post match notifications.
+* Provide correct .env for docker or params if started locally.
+
+Enjoy the climb! :D
