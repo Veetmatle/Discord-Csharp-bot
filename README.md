@@ -186,6 +186,11 @@ BotService implements IAsyncDisposable:
 - Structured properties for filtering
 - Different log levels per component
 
+### 8. Health status for docker
+- internal health monitoring system accessible via BotService.GetHealthStatus()
+- allows the Docker engine to verify if the bot is operational or requires a restart
+- docker checks the health status by accessing BotService.GetHealthStatus()
+
 ---
 
 ## Cancellation Token Flow
@@ -360,7 +365,7 @@ using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
 | UserRegistry | Persist user-account mappings, thread-safe |
 | LoggingService | Serilog configuration |
 | PollingStrategy | Background match detection loop |
-| CommandStrategy | On-demand match checking (future use) |
+| CommandStrategy | On-demand match checking - implemented on command (also implemented with CancellationToken, this time given - no loop) |
 | ImageSharpRenderer | Generate match summary images |
 
 ---
