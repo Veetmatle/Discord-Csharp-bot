@@ -1,4 +1,5 @@
 ﻿using System.Collections.Concurrent;
+using Discord_Bot_AI.Models;
 using Serilog;
 
 namespace Discord_Bot_AI.Services;
@@ -149,6 +150,100 @@ public class RiotImageCacheService : IDisposable
         {
             lockObj.Release();
         }
+    }
+
+    /// <summary>
+    /// Returns statistics about the current cache state.
+    /// </summary>
+    public CacheStats GetCacheStats()
+    {
+        try
+        {
+            var champPath = Path.Combine(_cachePath, "champions");
+            var itemsPath = Path.Combine(_cachePath, "items");
+            
+            var champFiles = Directory.Exists(champPath) ? Directory.GetFiles(champPath) : Array.Empty<string>();
+            var itemFiles = Directory.Exists(itemsPath) ? Directory.GetFiles(itemsPath) : Array.Empty<string>();
+            
+            long totalSize = 0;
+            foreach (var file in champFiles.Concat(itemFiles))
+            {
+                try
+                {
+                    totalSize += new FileInfo(file).Length;
+                }
+                catch
+                {
+                    // Ignore files that can't be accessed
+                }
+            }
+            
+            return new CacheStats
+            {
+                FileCount = champFiles.Length + itemFiles.Length,
+                TotalSizeMB = totalSize / (1024.0 * 1024.0)
+            };
+        }
+        catch (Exception ex)
+        {
+            Log.Warning(ex, "Failed to get cache stats");
+            return new CacheStats { FileCount = 0, TotalSizeMB = 0 };
+        }
+    }
+
+    /// <summary>
+    /// Removes cached files older than the specified age to prevent disk bloat.
+    /// Should be called periodically (e.g., once per week).
+    /// </summary>
+    /// <param name="maxAge">Maximum age of files to keep.</param>
+    /// <returns>Number of files deleted.</returns>
+    public int CleanupOldFiles(TimeSpan maxAge)
+    {
+        int deletedCount = 0;
+        var cutoffTime = DateTime.UtcNow - maxAge;
+        
+        try
+        {
+            var directories = new[]
+            {
+                Path.Combine(_cachePath, "champions"),
+                Path.Combine(_cachePath, "items")
+            };
+
+            foreach (var dir in directories)
+            {
+                if (!Directory.Exists(dir)) continue;
+                
+                foreach (var file in Directory.GetFiles(dir))
+                {
+                    try
+                    {
+                        var fileInfo = new FileInfo(file);
+                        if (fileInfo.LastAccessTimeUtc < cutoffTime)
+                        {
+                            fileInfo.Delete();
+                            _cachedFiles.TryRemove(file, out _);
+                            deletedCount++;
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log.Warning(ex, "Failed to delete cache file: {File}", file);
+                    }
+                }
+            }
+            
+            if (deletedCount > 0)
+            {
+                Log.Information("Cache cleanup: deleted {Count} old files", deletedCount);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Cache cleanup failed");
+        }
+        
+        return deletedCount;
     }
 
     /// <summary>

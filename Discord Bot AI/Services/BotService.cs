@@ -202,6 +202,33 @@ public class BotService : IAsyncDisposable
         {
             _ = strategy.StartMonitoringAsync();
         }
+        
+        _ = RunPeriodicCacheCleanupAsync(_shutdownCts.Token);
+    }
+
+    /// <summary>
+    /// Runs periodic cache cleanup every week to prevent disk bloat.
+    /// </summary>
+    private async Task RunPeriodicCacheCleanupAsync(CancellationToken cancellationToken)
+    {
+        var cleanupInterval = TimeSpan.FromDays(7);
+        var maxFileAge = TimeSpan.FromDays(30);
+        
+        try
+        {
+            using var timer = new PeriodicTimer(cleanupInterval);
+            
+            while (await timer.WaitForNextTickAsync(cancellationToken))
+            {
+                Log.Information("Running scheduled cache cleanup...");
+                var deleted = _imageCache.CleanupOldFiles(maxFileAge);
+                Log.Information("Cache cleanup complete. Deleted {Count} files", deleted);
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            Log.Debug("Cache cleanup task stopped");
+        }
     }
 
     /// <summary>
@@ -268,6 +295,10 @@ public class BotService : IAsyncDisposable
                 .WithDescription("Set the notification channel for match results (Admin only)")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("channel", ApplicationCommandOptionType.Channel, "The channel for notifications", isRequired: true))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("status")
+                .WithDescription("Show bot status and statistics")
+                .WithType(ApplicationCommandOptionType.SubCommand))
             .Build();
 
         try
@@ -302,6 +333,9 @@ public class BotService : IAsyncDisposable
                 break;
             case "setup-channel":
                 await SetupNotificationChannelAsync(command, subCommand);
+                break;
+            case "status":
+                await ShowStatusAsync(command);
                 break;
         }
     }
@@ -427,6 +461,39 @@ public class BotService : IAsyncDisposable
         await command.RespondAsync($"Notification channel set to <#{textChannel.Id}>. Match results will be posted there.", ephemeral: true);
         Log.Information("Guild {GuildId} notification channel set to {ChannelId}", guildId.Value, textChannel.Id);
     }
+
+    /// <summary>
+    /// Shows bot status including uptime, tracked players, and connected servers.
+    /// </summary>
+    private async Task ShowStatusAsync(SocketSlashCommand command)
+    {
+        var uptime = DateTime.UtcNow - _startTime;
+        var trackedUsers = _userRegistry.GetAllTrackedUsers().Count;
+        var connectedGuilds = _client.Guilds.Count;
+        var cacheStats = _imageCache.GetCacheStats();
+        
+        string uptimeText;
+        if (uptime.TotalDays >= 1)
+            uptimeText = $"{(int)uptime.TotalDays} day(s), {uptime.Hours} hour(s)";
+        else if (uptime.TotalHours >= 1)
+            uptimeText = $"{(int)uptime.TotalHours} hour(s), {uptime.Minutes} minute(s)";
+        else
+            uptimeText = $"{uptime.Minutes} minute(s), {uptime.Seconds} second(s)";
+        
+        var status = new System.Text.StringBuilder();
+        status.AppendLine($"**LaskBot Status**");
+        status.AppendLine($"Running for: {uptimeText}");
+        status.AppendLine($"Tracking: {trackedUsers} player(s)");
+        status.AppendLine($"Connected to: {connectedGuilds} server(s)");
+        status.AppendLine($"Cache: {cacheStats.FileCount} files ({cacheStats.TotalSizeMB:F1} MB)");
+        
+        if (_riot.IsRateLimited)
+            status.AppendLine("Riot API: Rate limited");
+        if (_gemini.IsRateLimited)
+            status.AppendLine("Gemini API: Rate limited");
+        
+        await command.RespondAsync(status.ToString(), ephemeral: true);
+    }
     
     /// <summary>
     /// Sends match notification to all guilds where the account is registered.
@@ -485,6 +552,8 @@ public class BotService : IAsyncDisposable
             if (channel == null)
             {
                 Log.Warning("Channel {ChannelId} not found in guild {GuildName}", channelId.Value, guild.Name);
+                await NotifyAdminAboutBrokenConfigAsync(guild);
+                _guildConfigRegistry.RemoveGuild(guildId);
                 continue;
             }
 
@@ -506,6 +575,40 @@ public class BotService : IAsyncDisposable
             }
         }
     }
+    
+    private async Task NotifyAdminAboutBrokenConfigAsync(SocketGuild guild)
+    {
+        string errorMessage = $"Attention: channel for league notifications on server **{guild.Name}** has been removed or the bot cannot reach it. \n" +
+                              "Notifications have been stopped. Let the admin use commend `/laskbot setup-channel` to set a new notification channel.";
+
+        try
+        {
+            if (guild.SystemChannel != null)
+            {
+                await guild.SystemChannel.SendMessageAsync(errorMessage);
+                return;
+            }
+            
+            var fallbackChannel = guild.TextChannels
+                .FirstOrDefault(c => guild.CurrentUser.GetPermissions(c).SendMessages);
+            
+            if (fallbackChannel != null)
+            {
+                await fallbackChannel.SendMessageAsync(errorMessage);
+                return;
+            }
+            
+            var owner = guild.Owner;
+            if (owner != null)
+            {
+                await owner.SendMessageAsync(errorMessage);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Could not send broken config notification to guild {GuildId}", guild.Id);
+        }
+    }
 
     /// <summary>
     /// Releases all resources used by the bot service.
@@ -517,24 +620,10 @@ public class BotService : IAsyncDisposable
         _shutdownCts.Cancel();
         _shutdownCts.Dispose();
         
-        // Dispose services - DI container manages their lifecycle,
-        // but we explicitly dispose them for graceful shutdown
-        _gemini.Dispose();
-        _riot.Dispose();
-        _imageCache.Dispose();
-        
-        if (_renderer is IDisposable rendererDisposable)
-            rendererDisposable.Dispose();
-        
-        if (_userRegistry is IDisposable registryDisposable)
-            registryDisposable.Dispose();
-        
-        if (_guildConfigRegistry is IDisposable guildConfigDisposable)
-            guildConfigDisposable.Dispose();
-        
         await _client.DisposeAsync();
         
-        // Dispose the DI container
+        // Automatic: ServiceProvider disposes all registered IDisposable singletons
+        // (RiotService, GeminiService, UserRegistry, GuildConfigRegistry, RiotImageCacheService, ImageSharpRenderer)
         if (_serviceProvider is IDisposable disposable)
             disposable.Dispose();
         

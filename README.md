@@ -1,4 +1,4 @@
-﻿# Discord Bot AI
+﻿﻿# Discord Bot AI
 
 Discord bot with League of Legends match tracking and Google Gemini AI integration. Built with .NET 9.0 and designed for Docker deployment.
 
@@ -82,17 +82,19 @@ Discord Bot AI/
 ├── Infrastructure/            # Cross-cutting concerns
 │   └── ServiceCollectionExtensions.cs  # DI registration, Polly policies
 ├── Data/                      # Persistence layer
-│   ├── IUserRegistry.cs       # Interface for user storage
-│   └── UserRegistry.cs        # Thread-safe JSON-based storage
+│   ├── IUserRegistry.cs       # Interface for user-account storage
+│   ├── UserRegistry.cs        # Thread-safe JSON storage (users.json)
+│   ├── IGuildConfigRegistry.cs # Interface for guild configuration
+│   └── GuildConfigRegistry.cs  # Thread-safe JSON storage (guilds.json)
 ├── Models/                    # Data transfer objects
-│   ├── RiotModels.cs          # Riot API response models
+│   ├── RiotModels.cs          # Riot API models + GuildConfig
 │   ├── GeminiModels.cs        # Gemini API models
-│   └── HealthStatus.cs        # Health check model
+│   └── HealthStatus.cs        # Health check + CacheStats models
 ├── Services/                  # Core business logic
 │   ├── BotService.cs          # Main orchestrator
 │   ├── RiotService.cs         # Riot API client
 │   ├── GeminiService.cs       # Gemini AI client
-│   ├── RiotImageCacheService.cs  # Asset caching
+│   ├── RiotImageCacheService.cs  # Asset caching with cleanup
 │   └── LoggingService.cs      # Serilog configuration
 └── Strategy/                  # Strategy pattern implementations
     ├── Notification/
@@ -119,24 +121,35 @@ The bot automatically manages guilds without requiring manual configuration:
   - Joining a new guild (via JoinedGuild event)
 - Bot cleans up guild configuration when leaving (via LeftGuild event)
 
-#### Targeted Notifications
-- Each RiotAccount stores RegisteredGuildId from the registration command
-- Match notifications are sent only to the guild where the account was registered
-- No cross-server spam
+#### Multi-Server Registration
+- One user can register the same Riot account on multiple servers
+- RiotAccount stores a list of RegisteredGuildIds (not just one)
+- When a match finishes:
+  - Image is rendered ONCE
+  - Notification sent to ALL servers where user is registered
+- Unregistering on one server does not affect other servers
+- Account is fully deleted only when no servers remain
 
 #### Dynamic Channel Configuration
 - Administrators use /laskbot setup-channel to set notification channel
-- Channel ID stored in guilds.json (persisted via UserRegistry)
+- Channel ID stored in guilds.json (via GuildConfigRegistry)
 - No hardcoded channel names
+- If channel is deleted, bot notifies admins and cleans up config
 
 #### Slash Commands
 | Command | Description |
 |---------|-------------|
-| /laskbot register nick:X tag:Y | Register LoL account (stores guild ID) |
-| /laskbot unregister | Remove account registration |
+| /laskbot register nick:X tag:Y | Register LoL account on this server |
+| /laskbot unregister | Remove account from this server |
 | /laskbot setup-channel channel:X | Set notification channel (Admin only) |
+| /laskbot status | Show bot uptime, stats, cache info |
 | /laskbot ask query:X | Ask Gemini AI a question |
 | /laskbot info | Show bot information |
+
+#### Data Separation (SRP)
+- UserRegistry: manages user-to-Riot-account mappings (users.json)
+- GuildConfigRegistry: manages per-server settings (guilds.json)
+- Both use ReaderWriterLockSlim for thread safety
 
 ### 1. Dependency Injection (Microsoft.Extensions.DependencyInjection)
 
@@ -150,6 +163,7 @@ Program.cs
   └── ServiceCollection.AddApplicationServices()
         ├── AppSettings (singleton)
         ├── IUserRegistry -> UserRegistry
+        ├── IGuildConfigRegistry -> GuildConfigRegistry
         ├── RiotImageCacheService
         ├── IGameSummaryRenderer -> ImageSharpRenderer
         ├── RiotService (uses IHttpClientFactory)
@@ -188,9 +202,9 @@ Multiple layers of rate limiting:
 | ImageSharpRenderer | SemaphoreSlim(2,2) | Max 2 concurrent renders |
 | RiotImageCacheService | Per-file SemaphoreSlim | Prevent duplicate downloads |
 
-### 5. Thread-Safe User Registry (ReaderWriterLockSlim)
+### 5. Thread-Safe Registries (ReaderWriterLockSlim)
 
-UserRegistry.cs uses ReaderWriterLockSlim for optimal concurrency:
+UserRegistry.cs and GuildConfigRegistry.cs use ReaderWriterLockSlim for optimal concurrency:
 - Multiple concurrent readers allowed
 - Exclusive access for writes
 - Atomic file operations (write to .tmp, then move)
@@ -200,13 +214,27 @@ Read operations:  _lock.EnterReadLock()  -> Multiple allowed
 Write operations: _lock.EnterWriteLock() -> Exclusive access
 ```
 
-### 6. Graceful Shutdown
+### 6. Graceful Shutdown and Disposal Strategy
 
 BotService implements IAsyncDisposable:
 - SIGTERM/SIGINT handlers registered
 - CancellationToken propagated to all async operations
 - All strategies stopped before Discord client logout
-- Resources disposed in correct order
+
+Disposal strategy (what needs manual Dispose):
+```
+Manual dispose required:
+├── _shutdownCts (CancellationTokenSource) - not in DI
+└── _client (DiscordSocketClient) - not in DI, needs controlled order
+
+Automatic dispose (by ServiceProvider):
+├── RiotService         -> SemaphoreSlim
+├── GeminiService       -> SemaphoreSlim  
+├── RiotImageCacheService -> HttpClient, SemaphoreSlim locks
+├── ImageSharpRenderer  -> SemaphoreSlim
+├── UserRegistry        -> ReaderWriterLockSlim
+└── GuildConfigRegistry -> ReaderWriterLockSlim
+```
 
 ### 7. Structured Logging (Serilog)
 
@@ -215,10 +243,23 @@ BotService implements IAsyncDisposable:
 - Structured properties for filtering
 - Different log levels per component
 
-### 8. Health status for docker
-- internal health monitoring system accessible via BotService.GetHealthStatus()
-- allows the Docker engine to verify if the bot is operational or requires a restart
-- docker checks the health status by accessing BotService.GetHealthStatus()
+### 8. Health Status and Monitoring
+
+- BotService.GetHealthStatus() returns current state
+- /laskbot status command shows:
+  - Uptime
+  - Tracked players count
+  - Connected servers count
+  - Cache statistics (file count, size in MB)
+  - Rate limit status for APIs
+
+### 9. Automatic Cache Cleanup
+
+RiotImageCacheService manages Data Dragon assets:
+- Champion and item icons cached locally
+- Periodic cleanup runs every 7 days (via BotService)
+- Files not accessed for 30 days are deleted
+- Prevents disk bloat on long-running instances
 
 ---
 
@@ -279,32 +320,84 @@ using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
 
 ## Application Flow Scenarios
 
-### Scenario 1: User Registers Account
+### Scenario 1: User Registers Account (First Server)
 
 ```
-1. User executes /laskbot register nick:Player tag:EUNE
+1. User executes /laskbot register nick:Player tag:EUNE on Server A
 2. BotService.OnSlashCommandAsync receives command
 3. BotService.RegisterRiotAccountAsync called
 4. command.DeferAsync() - Discord shows "thinking..."
-5. RiotService.GetAccountAsync(nick, tag, token)
+5. Check if user already has an account:
+   - UserRegistry.GetAccount(discordId) returns null
+6. RiotService.GetAccountAsync(nick, tag, token)
    - SemaphoreSlim.WaitAsync(token) - acquire rate limit lock
-   - Check minimum interval since last request
    - IHttpClientFactory.CreateClient("RiotApi")
    - HttpClient.GetAsync(url, token)
    - Polly policy handles retries if needed
    - Deserialize response to RiotAccount
    - SemaphoreSlim.Release() - release lock
-6. RiotService.GetLatestMatchIdAsync(puuid, token)
-   - Same flow as above
-7. UserRegistry.RegisterUser(discordId, account)
+7. RiotService.GetLatestMatchIdAsync(puuid, token)
+8. UserRegistry.RegisterUser(discordId, account, guildId)
+   - Creates new account with RegisteredGuildIds = [Server A]
    - ReaderWriterLockSlim.EnterWriteLock()
-   - Update dictionary
-   - SaveInternal() - write JSON to temp file, move to target
+   - SaveInternal() - atomic write to users.json
    - ReaderWriterLockSlim.ExitWriteLock()
-8. command.FollowupAsync("Account registered...")
+9. command.FollowupAsync("Account registered...")
 ```
 
-### Scenario 2: Polling Detects New Match
+### Scenario 2: Same User Registers on Second Server
+
+```
+1. User executes /laskbot register nick:Player tag:EUNE on Server B
+2. BotService.RegisterRiotAccountAsync called
+3. UserRegistry.GetAccount(discordId) returns existing account
+4. Check if guildId already in RegisteredGuildIds:
+   - Server B not in list
+5. UserRegistry.RegisterUser(discordId, account, guildId)
+   - Adds Server B to existing account's RegisteredGuildIds
+   - NO API call to Riot (account already known)
+6. Account now has RegisteredGuildIds = [Server A, Server B]
+7. command.FollowupAsync("Your account is now also tracked on this server")
+```
+
+### Scenario 3: Match Notification (Multi-Server)
+
+```
+1. PollingStrategy detects new match for user
+2. NotifyMatchFinishedAsync(account, matchData, token) called
+3. account.RegisteredGuildIds = [Server A, Server B]
+4. Render image ONCE:
+   - ImageSharpRenderer.RenderSummaryAsync(account, matchData, token)
+   - Result copied to byte[] imageData
+5. For each guild in RegisteredGuildIds:
+   a. Server A:
+      - Get channelId from GuildConfigRegistry.GetNotificationChannel(guildA)
+      - Send image to channel
+   b. Server B:
+      - Get channelId from GuildConfigRegistry.GetNotificationChannel(guildB)
+      - Send same image to channel
+6. One render, multiple sends = efficient
+```
+
+### Scenario 4: User Unregisters from One Server
+
+```
+1. User executes /laskbot unregister on Server A
+2. User has RegisteredGuildIds = [Server A, Server B]
+3. BotService.UnregisterRiotAccountAsync called
+4. UserRegistry.RemoveUserFromGuild(discordId, guildA)
+   - Removes Server A from list
+   - RegisteredGuildIds = [Server B]
+   - Account still exists (list not empty)
+5. command.FollowupAsync("Unregistered from this server. Still tracked on 1 other server(s)")
+
+If user then unregisters from Server B:
+   - RegisteredGuildIds becomes empty
+   - Account fully deleted from users.json
+   - command.FollowupAsync("Account completely unregistered")
+```
+
+### Scenario 5: Polling Detects New Match (Full Flow)
 
 ```
 1. PollingStrategy.StartMonitoringAsync running in background
@@ -336,7 +429,7 @@ using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
 9. Discord channel.SendFileAsync(imageStream, ...)
 ```
 
-### Scenario 3: User Asks AI Question
+### Scenario 6: User Asks AI Question
 
 ```
 1. User executes /laskbot ask query:"What is League of Legends?"
@@ -354,7 +447,7 @@ using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(
 5. command.FollowupAsync(formatted response)
 ```
 
-### Scenario 4: Graceful Shutdown (Docker stop)
+### Scenario 7: Graceful Shutdown (Docker stop)
 
 ```
 1. Docker sends SIGTERM to container
