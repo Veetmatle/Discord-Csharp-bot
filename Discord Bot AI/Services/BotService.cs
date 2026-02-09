@@ -299,6 +299,10 @@ public class BotService : IAsyncDisposable
                 .WithName("status")
                 .WithDescription("Show bot status and statistics")
                 .WithType(ApplicationCommandOptionType.SubCommand))
+            .AddOption(new SlashCommandOptionBuilder()
+                .WithName("check-latest-match")
+                .WithDescription("Check and display your latest match result")
+                .WithType(ApplicationCommandOptionType.SubCommand))
             .Build();
 
         try
@@ -336,6 +340,9 @@ public class BotService : IAsyncDisposable
                 break;
             case "status":
                 await ShowStatusAsync(command);
+                break;
+            case "check-latest-match":
+                await CheckLatestMatchAsync(command);
                 break;
         }
     }
@@ -496,6 +503,56 @@ public class BotService : IAsyncDisposable
     }
     
     /// <summary>
+    /// Checks and displays the latest match for the requesting user using CommandStrategy.
+    /// </summary>
+    private async Task CheckLatestMatchAsync(SocketSlashCommand command)
+    {
+        await command.DeferAsync();
+        
+        var guildId = command.GuildId;
+        if (guildId == null)
+        {
+            await command.FollowupAsync("This command must be used in a server.");
+            return;
+        }
+        
+        var account = _userRegistry.GetAccount(command.User.Id);
+        if (account == null)
+        {
+            await command.FollowupAsync("You are not registered. Use `/laskbot register` first.");
+            return;
+        }
+        
+        if (!account.RegisteredGuildIds.Contains(guildId.Value))
+        {
+            await command.FollowupAsync("You are not registered on this server. Use `/laskbot register` to register here.");
+            return;
+        }
+        
+        var commandStrategy = _notificationStrategies.OfType<CommandStrategy>().FirstOrDefault();
+        if (commandStrategy == null)
+        {
+            await command.FollowupAsync("Command strategy not available.");
+            return;
+        }
+        
+        try
+        {
+            await commandStrategy.CheckUserMatchAsync(command.User.Id, _shutdownCts.Token);
+            await command.FollowupAsync("Your latest match has been processed and sent to the notification channel.");
+        }
+        catch (OperationCanceledException)
+        {
+            await command.FollowupAsync("Operation was cancelled.");
+        }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to check latest match for user {UserId}", command.User.Id);
+            await command.FollowupAsync("Failed to retrieve your latest match. Please try again later.");
+        }
+    }
+    
+    /// <summary>
     /// Sends match notification to all guilds where the account is registered.
     /// Renders the image once and sends it to all configured notification channels.
     /// </summary>
@@ -560,7 +617,7 @@ public class BotService : IAsyncDisposable
             try
             {
                 using var sendStream = new MemoryStream(imageData);
-                await channel.SendFileAsync(sendStream, "match.png", $"**{account.gameName}** finished a match!",
+                await channel.SendFileAsync(sendStream, "match.png", $"**{account.gameName}** finished a match :)",
                     options: new RequestOptions { CancelToken = ct });
                 Log.Debug("Sent match notification to guild {GuildName}", guild.Name);
             }

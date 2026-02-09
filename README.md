@@ -1,4 +1,4 @@
-﻿﻿# Discord Bot AI
+﻿# Discord Bot AI
 
 Discord bot with League of Legends match tracking and Google Gemini AI integration. Built with .NET 9.0 and designed for Docker deployment.
 

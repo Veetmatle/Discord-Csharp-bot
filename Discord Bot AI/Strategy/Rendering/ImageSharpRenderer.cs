@@ -11,6 +11,7 @@ namespace Discord_Bot_AI.Strategy.Rendering;
 
 /// <summary>
 /// Renders match summary images using ImageSharp library with concurrency control and timeout protection.
+/// Layout mirrors the League of Legends post-game scoreboard.
 /// </summary>
 public class ImageSharpRenderer : IGameSummaryRenderer, IDisposable
 {
@@ -22,6 +23,31 @@ public class ImageSharpRenderer : IGameSummaryRenderer, IDisposable
     private readonly SemaphoreSlim _renderQueue = new(2, 2);
     private static readonly TimeSpan RenderTimeout = TimeSpan.FromSeconds(30);
     private bool _disposed;
+
+    // ── Layout constants ────────────────────────────────────────────────
+    private const int ImageWidth = 750;
+    private const int RowHeight = 44;
+    private const int TeamHeaderHeight = 32;
+    private const int ColumnHeaderHeight = 22;
+    private const int HeaderHeight = 80;
+    private const int TeamSpacing = 12;
+    private const int BottomPadding = 16;
+
+    // Column X positions
+    private const int ColChampIcon = 8;
+    private const int ColLevel = 42;        // level badge overlapping champion icon
+    private const int ColName = 56;
+    private const int ColItems = 170;
+    private const int ColKda = 420;
+    private const int ColCs = 510;
+    private const int ColGold = 570;
+    private const int ColDamage = 655;
+
+    // Icon sizes
+    private const int ChampIconSize = 32;
+    private const int ItemIconSize = 24;
+    private const int ItemSpacing = 2;
+    private const int TrinketGap = 5;
 
     /// <summary>
     /// Initializes the renderer, loads font collections from assets, and injects the image cache service.
@@ -37,10 +63,6 @@ public class ImageSharpRenderer : IGameSummaryRenderer, IDisposable
     /// Main method to process match data. Prepares graphical assets asynchronously 
     /// and generates the final summary image as a stream with timeout protection.
     /// </summary>
-    /// <param name="account">The Riot account of the player.</param>
-    /// <param name="matchData">The match data to render.</param>
-    /// <param name="cancellationToken">External token to cancel the operation.</param>
-    /// <returns>A stream containing the rendered PNG image.</returns>
     public async Task<Stream> RenderSummaryAsync(RiotAccount account, MatchData matchData, CancellationToken cancellationToken = default)
     {
         using var timeoutCts = new CancellationTokenSource(RenderTimeout);
@@ -63,148 +85,360 @@ public class ImageSharpRenderer : IGameSummaryRenderer, IDisposable
     }
 
     /// <summary>
-    /// Internal rendering logic with cancellation support.
+    /// Internal rendering logic. Renders full match scoreboard with all 10 players split into two teams.
     /// </summary>
     private async Task<Stream> RenderSummaryInternalAsync(RiotAccount account, MatchData matchData, CancellationToken cancellationToken)
     {
         var me = matchData.info.participants.FirstOrDefault(p => p.puuid == account.puuid);
         if (me == null) throw new Exception("Player not found in match data");
 
-        cancellationToken.ThrowIfCancellationRequested();
-        
-        string championPath = await _imageCache.GetChampionIconAsync(me.championName, cancellationToken);
-    
-        var itemPaths = new List<string>();
-        int[] itemIds = { me.item0, me.item1, me.item2, me.item3, me.item4, me.item5, me.item6 };
-        
-        var itemTasks = itemIds.Select(id => _imageCache.GetItemIconAsync(id, cancellationToken)).ToList();
-        var results = await Task.WhenAll(itemTasks);
-        itemPaths.AddRange(results);
+        var allParticipants = matchData.info.participants;
+        var winningTeam = allParticipants.Where(p => p.win).OrderByDescending(p => p.kills).ToList();
+        var losingTeam = allParticipants.Where(p => !p.win).OrderByDescending(p => p.kills).ToList();
 
         cancellationToken.ThrowIfCancellationRequested();
 
-        using Image<Rgba32> image = new Image<Rgba32>(1100, 350);
+        var playerAssets = await LoadAllPlayerAssetsAsync(allParticipants, cancellationToken);
+
+        cancellationToken.ThrowIfCancellationRequested();
+
+        // Calculate image height dynamically
+        int team1Height = TeamHeaderHeight + ColumnHeaderHeight + (winningTeam.Count * RowHeight);
+        int team2Height = TeamHeaderHeight + ColumnHeaderHeight + (losingTeam.Count * RowHeight);
+        int imageHeight = HeaderHeight + team1Height + TeamSpacing + team2Height + BottomPadding;
+
+        using Image<Rgba32> image = new(ImageWidth, imageHeight);
 
         image.Mutate(ctx =>
         {
             DrawBackground(ctx);
             DrawHeader(ctx, me, matchData);
-            DrawTableHeaders(ctx);
-            DrawPlayerRow(ctx, me, 160, championPath, itemPaths);
+            
+            float yOffset = HeaderHeight;
+            
+            // ── Winning team ────────────────────────────────────────
+            DrawTeamHeader(ctx, "VICTORY", Color.FromRgb(70, 130, 180), yOffset);
+            yOffset += TeamHeaderHeight;
+            DrawTableHeaders(ctx, yOffset);
+            yOffset += ColumnHeaderHeight;
+            
+            foreach (var player in winningTeam)
+            {
+                var assets = playerAssets[player.puuid];
+                bool isTrackedPlayer = player.puuid == account.puuid;
+                DrawPlayerRow(ctx, player, yOffset, assets, isTrackedPlayer, isWinningTeam: true);
+                yOffset += RowHeight;
+            }
+            
+            yOffset += TeamSpacing;
+            
+            // ── Losing team ─────────────────────────────────────────
+            DrawTeamHeader(ctx, "DEFEAT", Color.FromRgb(180, 70, 70), yOffset);
+            yOffset += TeamHeaderHeight;
+            DrawTableHeaders(ctx, yOffset);
+            yOffset += ColumnHeaderHeight;
+            
+            foreach (var player in losingTeam)
+            {
+                var assets = playerAssets[player.puuid];
+                bool isTrackedPlayer = player.puuid == account.puuid;
+                DrawPlayerRow(ctx, player, yOffset, assets, isTrackedPlayer, isWinningTeam: false);
+                yOffset += RowHeight;
+            }
         });
 
         var ms = new MemoryStream();
         await image.SaveAsPngAsync(ms, cancellationToken);
         ms.Position = 0;
         
-        Log.Debug("Rendered match summary for {PlayerName}", account.gameName);
+        Log.Debug("Rendered full match summary for {PlayerName} with {PlayerCount} players", account.gameName, allParticipants.Count);
         return ms;
     }
 
     /// <summary>
-    /// Fills the entire canvas with the base background color.
+    /// Loads champion and item icons for all participants in parallel.
+    /// Items are collected in order: item0–item5 (main slots), item7 (extra/boots slot), item6 (trinket).
+    /// Non-empty main items are packed left-to-right; trinket is always last.
     /// </summary>
+    private async Task<Dictionary<string, PlayerAssets>> LoadAllPlayerAssetsAsync(List<Participant> participants, CancellationToken cancellationToken)
+    {
+        var result = new Dictionary<string, PlayerAssets>();
+        
+        var tasks = participants.Select(async p =>
+        {
+            string championPath = await _imageCache.GetChampionIconAsync(p.championName, cancellationToken);
+            
+            // Main item slots: item0-item5 + item7 (extra slot for roles like ADC boots)
+            // item6 is always the trinket (ward) and rendered separately at the end
+            int[] mainItemIds = { p.item0, p.item1, p.item2, p.item3, p.item4, p.item5, p.item7 };
+            int trinketId = p.item6;
+            
+            // Pack non-empty items to the left (filter out 0 = empty slot)
+            var nonEmptyMainIds = mainItemIds.Where(id => id != 0).ToList();
+            
+            // Load icons for non-empty main items
+            var mainItemTasks = nonEmptyMainIds.Select(id => _imageCache.GetItemIconAsync(id, cancellationToken));
+            var mainItemPaths = (await Task.WhenAll(mainItemTasks)).ToList();
+            
+            // Load trinket icon (may be empty)
+            string trinketPath = trinketId != 0 
+                ? await _imageCache.GetItemIconAsync(trinketId, cancellationToken) 
+                : "";
+            
+            return new PlayerAssets
+            {
+                Puuid = p.puuid,
+                ChampionPath = championPath,
+                MainItemPaths = mainItemPaths,      // only non-empty, packed left
+                TrinketPath = trinketPath,
+                MainSlotCount = mainItemIds.Length    // total available slots (for empty slot rendering)
+            };
+        });
+
+        var allAssets = await Task.WhenAll(tasks);
+        foreach (var asset in allAssets)
+        {
+            result[asset.Puuid] = asset;
+        }
+        
+        return result;
+    }
+
+    /// <summary>
+    /// Stores loaded image paths for a player, separating main items from trinket.
+    /// </summary>
+    private class PlayerAssets
+    {
+        public string Puuid { get; set; } = "";
+        public string ChampionPath { get; set; } = "";
+        public List<string> MainItemPaths { get; set; } = new();  // packed non-empty items
+        public string TrinketPath { get; set; } = "";              // trinket (item6)
+        public int MainSlotCount { get; set; } = 7;                // total main slots available
+    }
+
+    // ════════════════════════════════════════════════════════════════════
+    //  Drawing helpers
+    // ════════════════════════════════════════════════════════════════════
+
     private void DrawBackground(IImageProcessingContext ctx)
     {
         ctx.Fill(Color.FromRgb(10, 20, 25));
     }
 
-    /// <summary>
-    /// Draws the image header containing match status (Victory/Defeat) and game metadata.
-    /// </summary>
     private void DrawHeader(IImageProcessingContext ctx, Participant me, MatchData matchData)
     {
-        var titleFont = _headingFamily.CreateFont(42);
-        var subFont = _statsFamily.CreateFont(16);
+        var titleFont = _headingFamily.CreateFont(28);
+        var subFont = _statsFamily.CreateFont(13);
 
-        string title = me.win ? "ZWYCIĘSTWO" : "PORAŻKA";
-        Color titleColor = me.win ? Color.FromRgb(200, 170, 110) : Color.FromRgb(220, 50, 50);
+        string title = me.win ? "VICTORY" : "DEFEAT";
+        Color titleColor = me.win ? Color.FromRgb(70, 130, 180) : Color.FromRgb(180, 70, 70);
 
-        ctx.DrawText(title, titleFont, titleColor, new PointF(40, 30));
+        ctx.DrawText(title, titleFont, titleColor, new PointF(16, 12));
 
-        string gameInfo = $"Summoner's Rift • Ranked Solo/Duo • {matchData.info.gameDuration / 60} min";
-        ctx.DrawText(gameInfo, subFont, Color.Gray, new PointF(40, 85));
+        int minutes = (int)(matchData.info.gameDuration / 60);
+        int seconds = (int)(matchData.info.gameDuration % 60);
+        string gameInfo = $"{matchData.info.gameMode} • {minutes}:{seconds:D2}";
+        ctx.DrawText(gameInfo, subFont, Color.FromRgb(140, 140, 140), new PointF(16, 48));
+    }
+
+    private void DrawTeamHeader(IImageProcessingContext ctx, string teamName, Color color, float yOffset)
+    {
+        var teamFont = _statsFamily.CreateFont(13);
+        ctx.Fill(color.WithAlpha(0.15f), new RectangleF(0, yOffset, ImageWidth, TeamHeaderHeight));
+        ctx.DrawText(teamName, teamFont, color, new PointF(10, yOffset + 9));
+    }
+
+    private void DrawTableHeaders(IImageProcessingContext ctx, float yOffset)
+    {
+        var headerFont = _statsFamily.CreateFont(10);
+        Color c = Color.FromRgb(100, 100, 100);
+
+        ctx.DrawText("CHAMPION", headerFont, c, new PointF(ColChampIcon, yOffset + 5));
+        ctx.DrawText("ITEMS", headerFont, c, new PointF(ColItems, yOffset + 5));
+        ctx.DrawText("KDA", headerFont, c, new PointF(ColKda, yOffset + 5));
+        ctx.DrawText("CS", headerFont, c, new PointF(ColCs, yOffset + 5));
+        ctx.DrawText("GOLD", headerFont, c, new PointF(ColGold, yOffset + 5));
+        ctx.DrawText("DMG", headerFont, c, new PointF(ColDamage, yOffset + 5));
     }
 
     /// <summary>
-    /// Draws the column names for statistics in the results table.
+    /// Draws a single player row with champion icon + level, name, packed items + trinket, and stats.
     /// </summary>
-    private void DrawTableHeaders(IImageProcessingContext ctx)
+    private void DrawPlayerRow(
+        IImageProcessingContext ctx, Participant player, float yOffset,
+        PlayerAssets assets, bool isTrackedPlayer, bool isWinningTeam)
     {
-        var headerFont = _statsFamily.CreateFont(14);
-        Color headerColor = Color.FromRgb(100, 120, 130);
-
-        ctx.DrawText("TABLICA WYNIKÓW", headerFont, headerColor, new PointF(40, 125));
-        ctx.DrawText("K / D / A", headerFont, headerColor, new PointF(680, 125));
-        ctx.DrawText("CS", headerFont, headerColor, new PointF(850, 125));
-        ctx.DrawText("GOLD", headerFont, headerColor, new PointF(950, 125));
-    }
-
-    /// <summary>
-    /// Draws the full player data row, including champion icon, items, and numerical statistics.
-    /// </summary>
-    private void DrawPlayerRow(IImageProcessingContext ctx, Participant me, float yOffset, string champPath, List<string> itemPaths)
-    {
-        var nameFont = _statsFamily.CreateFont(20);
-        var kdaFont = _statsFamily.CreateFont(22);
-        var goldColor = Color.FromRgb(200, 170, 110);
-
-        if (!string.IsNullOrEmpty(champPath))
+        // ── Row background ──────────────────────────────────────────
+        Color rowBg;
+        if (isTrackedPlayer)
         {
-            using var champImg = Image.Load(champPath);
-            champImg.Mutate(i => i.Resize(60, 60));
-            ctx.DrawImage(champImg, new Point(40, (int)yOffset), 1f);
+            rowBg = isWinningTeam
+                ? Color.FromRgb(35, 55, 75)
+                : Color.FromRgb(65, 40, 45);
         }
-
-        ctx.DrawText(me.summonerName, nameFont, goldColor, new PointF(115, yOffset + 18));
-
-        DrawItems(ctx, itemPaths, new PointF(350, yOffset + 10));
-
-        string kda = $"{me.kills} / {me.deaths} / {me.assists}";
-        ctx.DrawText(kda, kdaFont, goldColor, new PointF(700, yOffset + 15));
-
-        ctx.DrawText(me.totalMinionsKilled.ToString(), nameFont, Color.White, new PointF(860, yOffset + 18));
-
-        ctx.DrawText($"{me.goldEarned:N0}".Replace(",", " "), nameFont, goldColor, new PointF(960, yOffset + 18));
-    }
-    
-    /// <summary>
-    /// Renders item icons in a row, maintaining an additional gap for the Trinket slot.
-    /// </summary>
-    private void DrawItems(IImageProcessingContext ctx, List<string> itemPaths, PointF startPos)
-    {
-        int iconSize = 40;
-        int spacing = 2;
-        int trinketGap = 10;
-
-        for (int i = 0; i < itemPaths.Count; i++)
+        else
         {
-            float currentX = startPos.X + (i * (iconSize + spacing));
+            rowBg = isWinningTeam
+                ? Color.FromRgb(22, 32, 42)
+                : Color.FromRgb(38, 28, 33);
+        }
+        ctx.Fill(rowBg, new RectangleF(0, yOffset, ImageWidth, RowHeight));
+
+        // Text colors
+        Color textColor = isTrackedPlayer ? Color.FromRgb(255, 215, 0) : Color.White;
+        Color mutedText = Color.FromRgb(160, 160, 160);
+        Color goldColor = Color.FromRgb(200, 170, 90);
+        Color dmgColor = Color.FromRgb(200, 100, 100);
+
+        var nameFont = _statsFamily.CreateFont(12);
+        var statsFont = _statsFamily.CreateFont(12);
+        var levelFont = _statsFamily.CreateFont(10);
+
+        float rowCenterY = yOffset + (RowHeight - ChampIconSize) / 2f;
+
+        // ── Champion icon (32×32) ───────────────────────────────────
+        DrawIcon(ctx, assets.ChampionPath, ColChampIcon, (int)rowCenterY, ChampIconSize);
+
+        // ── Champion level badge ────────────────────────────────────
+        DrawLevelBadge(ctx, player.level, levelFont, ColChampIcon, (int)(rowCenterY + ChampIconSize - 12));
+
+        // ── Player name (truncated) ─────────────────────────────────
+        string displayName = player.summonerName.Length > 12
+            ? player.summonerName[..10] + ".."
+            : player.summonerName;
+        ctx.DrawText(displayName, nameFont, textColor, new PointF(ColName, yOffset + 15));
+
+        // ── Items (packed left-to-right) + trinket ──────────────────
+        float itemY = yOffset + (RowHeight - ItemIconSize) / 2f;
+        DrawItems(ctx, assets.MainItemPaths, assets.TrinketPath, new PointF(ColItems, itemY));
+
+        // ── KDA ─────────────────────────────────────────────────────
+        string kda = $"{player.kills} / {player.deaths} / {player.assists}";
+        ctx.DrawText(kda, statsFont, textColor, new PointF(ColKda, yOffset + 15));
+
+        // ── CS ──────────────────────────────────────────────────────
+        int totalCS = player.totalMinionsKilled + player.neutralMinionsKilled;
+        ctx.DrawText(totalCS.ToString(), statsFont, mutedText, new PointF(ColCs, yOffset + 15));
+
+        // ── Gold ────────────────────────────────────────────────────
+        string gold = player.goldEarned >= 1000
+            ? $"{player.goldEarned / 1000f:F1}k"
+            : player.goldEarned.ToString();
+        ctx.DrawText(gold, statsFont, goldColor, new PointF(ColGold, yOffset + 15));
+
+        // ── Damage ──────────────────────────────────────────────────
+        string damage = player.totalDamageDealtToChampions >= 1000
+            ? $"{player.totalDamageDealtToChampions / 1000f:F1}k"
+            : player.totalDamageDealtToChampions.ToString();
+        ctx.DrawText(damage, statsFont, dmgColor, new PointF(ColDamage, yOffset + 15));
+    }
+
+    /// <summary>
+    /// Renders a small level badge at the bottom-left corner of the champion icon.
+    /// </summary>
+    private void DrawLevelBadge(IImageProcessingContext ctx, int level, Font font, int x, int y)
+    {
+        const int badgeSize = 14;
+        // Dark background circle/square for level number
+        ctx.Fill(Color.FromRgb(0, 0, 0).WithAlpha(0.8f), new RectangleF(x, y, badgeSize, badgeSize));
         
-            if (i == 6) currentX += trinketGap;
+        string levelStr = level.ToString();
+        // Center the level text in the badge
+        float textX = x + (badgeSize - levelStr.Length * 6) / 2f;
+        float textY = y + 1;
+        ctx.DrawText(levelStr, font, Color.FromRgb(200, 200, 200), new PointF(textX, textY));
+    }
 
-            if (string.IsNullOrEmpty(itemPaths[i]))
-            {
-                ctx.Fill(Color.FromRgb(20, 25, 30), new RectangleF(currentX, startPos.Y, iconSize, iconSize));
-                continue;
-            }
+    /// <summary>
+    /// Loads and draws a single icon at the specified position. Shows placeholder on failure.
+    /// </summary>
+    private void DrawIcon(IImageProcessingContext ctx, string path, int x, int y, int size)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            ctx.Fill(Color.FromRgb(30, 35, 40), new RectangleF(x, y, size, size));
+            return;
+        }
 
-            try 
-            {
-                using var itemImg = Image.Load(itemPaths[i]);
-                itemImg.Mutate(x => x.Resize(iconSize, iconSize));
-                ctx.DrawImage(itemImg, new Point((int)currentX, (int)startPos.Y), 1f);
-            }
-            catch 
-            {
-                ctx.Fill(Color.FromRgb(40, 40, 40), new RectangleF(currentX, startPos.Y, iconSize, iconSize));
-            }
+        try
+        {
+            using var img = Image.Load(path);
+            img.Mutate(i => i.Resize(size, size));
+            ctx.DrawImage(img, new Point(x, y), 1f);
+        }
+        catch
+        {
+            ctx.Fill(Color.FromRgb(50, 50, 50), new RectangleF(x, y, size, size));
         }
     }
 
     /// <summary>
-    /// Releases resources used by the renderer.
+    /// Renders item icons packed left-to-right with no gaps between filled items.
+    /// Empty slots are rendered after all filled items to maintain consistent row width.
+    /// Trinket (ward) is always rendered at the end with a small gap.
     /// </summary>
+    private void DrawItems(IImageProcessingContext ctx, List<string> packedItemPaths, string trinketPath, PointF startPos)
+    {
+        const int mainSlots = 7;  // item0-item5 + item7 (extra slot)
+
+        // Draw packed non-empty items first (left-to-right, no gaps)
+        for (int i = 0; i < packedItemPaths.Count && i < mainSlots; i++)
+        {
+            float currentX = startPos.X + (i * (ItemIconSize + ItemSpacing));
+            DrawItemIcon(ctx, packedItemPaths[i], currentX, startPos.Y);
+        }
+
+        // Draw empty placeholder slots for remaining main positions
+        for (int i = packedItemPaths.Count; i < mainSlots; i++)
+        {
+            float currentX = startPos.X + (i * (ItemIconSize + ItemSpacing));
+            DrawEmptyItemSlot(ctx, currentX, startPos.Y);
+        }
+
+        // Draw trinket with gap after all main slots
+        float trinketX = startPos.X + (mainSlots * (ItemIconSize + ItemSpacing)) + TrinketGap;
+        if (!string.IsNullOrEmpty(trinketPath))
+        {
+            DrawItemIcon(ctx, trinketPath, trinketX, startPos.Y);
+        }
+        else
+        {
+            DrawEmptyItemSlot(ctx, trinketX, startPos.Y);
+        }
+    }
+
+    /// <summary>
+    /// Draws a single item icon at the given position.
+    /// </summary>
+    private void DrawItemIcon(IImageProcessingContext ctx, string path, float x, float y)
+    {
+        if (string.IsNullOrEmpty(path))
+        {
+            DrawEmptyItemSlot(ctx, x, y);
+            return;
+        }
+
+        try
+        {
+            using var itemImg = Image.Load(path);
+            itemImg.Mutate(i => i.Resize(ItemIconSize, ItemIconSize));
+            ctx.DrawImage(itemImg, new Point((int)x, (int)y), 1f);
+        }
+        catch
+        {
+            ctx.Fill(Color.FromRgb(60, 30, 30), new RectangleF(x, y, ItemIconSize, ItemIconSize));
+        }
+    }
+
+    /// <summary>
+    /// Draws an empty item slot placeholder.
+    /// </summary>
+    private void DrawEmptyItemSlot(IImageProcessingContext ctx, float x, float y)
+    {
+        ctx.Fill(Color.FromRgb(18, 22, 28), new RectangleF(x, y, ItemIconSize, ItemIconSize));
+        ctx.Draw(Color.FromRgb(30, 35, 40), 1f, new RectangleF(x, y, ItemIconSize, ItemIconSize));
+    }
+
     public void Dispose()
     {
         if (_disposed) return;

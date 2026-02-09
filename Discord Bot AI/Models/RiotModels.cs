@@ -1,4 +1,4 @@
-﻿namespace Discord_Bot_AI.Models;
+﻿﻿namespace Discord_Bot_AI.Models;
 
 /// <summary>
 /// Represents a Riot Games account linked to a Discord user.
@@ -57,17 +57,25 @@ public class Participant
     public string championName { get; set; }
     public bool win { get; set; }
     
-    // ITEMS
+    // ITEMS (item6 is trinket, item7 is extra ADC item from Victorious passive)
     public int item0 { get; set; }
     public int item1 { get; set; }
     public int item2 { get; set; }
     public int item3 { get; set; }
     public int item4 { get; set; }
     public int item5 { get; set; }
-    public int item6 { get; set; } 
+    public int item6 { get; set; }
+    public int item7 { get; set; } 
+    public int champLevel { get; set; }
+    
+    /// <summary>
+    /// Alias for champLevel to match renderer expectations.
+    /// </summary>
+    public int level => champLevel;
     
     // Additional stats
     public int totalMinionsKilled { get; set; } // All minions
     public int neutralMinionsKilled { get; set; } // Jungle minions
     public int goldEarned { get; set; }
+    public int totalDamageDealtToChampions { get; set; } // Damage dealt to enemy champions
 }
