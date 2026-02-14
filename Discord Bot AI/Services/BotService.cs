@@ -503,7 +503,8 @@ public class BotService : IAsyncDisposable
     }
     
     /// <summary>
-    /// Checks and displays the latest match for the requesting user using CommandStrategy.
+    /// Checks and displays the latest match for the requesting user.
+    /// Sends the result directly to the channel where the command was invoked.
     /// </summary>
     private async Task CheckLatestMatchAsync(SocketSlashCommand command)
     {
@@ -529,17 +530,39 @@ public class BotService : IAsyncDisposable
             return;
         }
         
-        var commandStrategy = _notificationStrategies.OfType<CommandStrategy>().FirstOrDefault();
-        if (commandStrategy == null)
-        {
-            await command.FollowupAsync("Command strategy not available.");
-            return;
-        }
-        
         try
         {
-            await commandStrategy.CheckUserMatchAsync(command.User.Id, _shutdownCts.Token);
-            await command.FollowupAsync("Your latest match has been processed and sent to the notification channel.");
+            // Get latest match directly without using the polling strategy's callback
+            string? matchId = await _riot.GetLatestMatchIdAsync(account.puuid, _shutdownCts.Token);
+            
+            if (string.IsNullOrEmpty(matchId))
+            {
+                await command.FollowupAsync("No recent matches found for your account.");
+                return;
+            }
+            
+            var matchData = await _riot.GetMatchDetailsAsync(matchId, _shutdownCts.Token);
+            if (matchData == null)
+            {
+                await command.FollowupAsync("Could not retrieve match details. Please try again later.");
+                return;
+            }
+            
+            // Render the match summary
+            using var imageStream = await _renderer.RenderSummaryAsync(account, matchData, _shutdownCts.Token);
+            using var memoryStream = new MemoryStream();
+            await imageStream.CopyToAsync(memoryStream, _shutdownCts.Token);
+            memoryStream.Position = 0;
+            
+            var me = matchData.info.participants.FirstOrDefault(p => p.puuid == account.puuid);
+            string resultText = me?.win == true ? "Victory" : "Defeat";
+            
+            // Send directly to the channel where command was invoked
+            await command.FollowupWithFileAsync(
+                memoryStream,
+                "match_summary.png",
+                $"**{account.gameName}#{account.tagLine}** - {resultText}"
+            );
         }
         catch (OperationCanceledException)
         {
@@ -680,7 +703,6 @@ public class BotService : IAsyncDisposable
         await _client.DisposeAsync();
         
         // Automatic: ServiceProvider disposes all registered IDisposable singletons
-        // (RiotService, GeminiService, UserRegistry, GuildConfigRegistry, RiotImageCacheService, ImageSharpRenderer)
         if (_serviceProvider is IDisposable disposable)
             disposable.Dispose();
         

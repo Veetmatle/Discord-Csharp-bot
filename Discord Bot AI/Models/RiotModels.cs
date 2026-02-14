@@ -1,4 +1,4 @@
-﻿﻿namespace Discord_Bot_AI.Models;
+﻿namespace Discord_Bot_AI.Models;
 
 /// <summary>
 /// Represents a Riot Games account linked to a Discord user.
@@ -22,9 +22,6 @@ public class RiotAccount
 /// </summary>
 public class GuildConfig
 {
-    /// <summary>
-    /// The text channel ID where match notifications will be sent.
-    /// </summary>
     public ulong NotificationChannelId { get; set; }
 }
 
@@ -51,21 +48,28 @@ public class Participant
 {
     public string puuid { get; set; }
     public string summonerName { get; set; }
+    public string riotIdGameName { get; set; }
+    
+    public string riotIdTagline { get; set; }
+    public string? teamPosition { get; set; }
+    
     public int kills { get; set; }
     public int deaths { get; set; }
     public int assists { get; set; }
     public string championName { get; set; }
     public bool win { get; set; }
     
-    // ITEMS (item6 is trinket, item7 is extra ADC item from Victorious passive)
+    // ITEMS: item0-item5 are main inventory slots, item6 is trinket (ward)
+    // roleBoundItem is the role quest slot (boots for ADC after quest completion, etc.)
     public int item0 { get; set; }
     public int item1 { get; set; }
     public int item2 { get; set; }
     public int item3 { get; set; }
     public int item4 { get; set; }
     public int item5 { get; set; }
-    public int item6 { get; set; }
-    public int item7 { get; set; } 
+    public int item6 { get; set; }  // Trinket slot
+    public int roleBoundItem { get; set; }
+    
     public int champLevel { get; set; }
     
     /// <summary>
@@ -77,5 +81,11 @@ public class Participant
     public int totalMinionsKilled { get; set; } // All minions
     public int neutralMinionsKilled { get; set; } // Jungle minions
     public int goldEarned { get; set; }
-    public int totalDamageDealtToChampions { get; set; } // Damage dealt to enemy champions
+    public int totalDamageDealtToChampions { get; set; } 
+    
+    /// <summary>
+    /// Captures any unmapped JSON fields from Riot API for diagnostic purposes.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonExtensionData]
+    public Dictionary<string, System.Text.Json.JsonElement>? ExtensionData { get; set; }
 }
