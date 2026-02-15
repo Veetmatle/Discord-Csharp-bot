@@ -25,15 +25,49 @@ public class RiotImageCacheService : IDisposable
     {
         _version = version;
         _cachePath = cachePath;
+        _httpClient.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (compatible; DiscordBot/1.0)");
         
         Directory.CreateDirectory(_cachePath);
         Directory.CreateDirectory(Path.Combine(_cachePath, "champions"));
         Directory.CreateDirectory(Path.Combine(_cachePath, "items"));
         
+        MigrateLegacyNames();
         ScanExistingCache();
         Log.Information("RiotImageCacheService initialized with cache path: {CachePath}", cachePath);
     }
-
+    
+    private string NormalizeChampionName(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return name;
+        string cleanName = name.Replace("'", "").Replace(" ", "");
+        
+        return cleanName.ToLower() switch
+        {
+            "wukong" or "monkeyking" => "MonkeyKing",
+            "reksai"      => "RekSai",
+            "drmundo"     => "DrMundo",
+            "leesin"      => "LeeSin",
+            "masteryi"    => "MasterYi",
+            "missfortune" => "MissFortune",
+            "jarvaniv"    => "JarvanIV",
+            "tahmkench"   => "TahmKench",
+            "twistedfate" => "TwistedFate",
+            "xinzhao"     => "XinZhao",
+            "aurelionsol" => "AurelionSol",
+            "kogmaw"      => "KogMaw",
+            "ksante"      => "KSante",
+            "fiddlesticks" => "Fiddlesticks",
+            "leblanc"      => "Leblanc",
+            "belveth"      => "Belveth",
+            "velkoz"       => "Velkoz",
+            "khazix"       => "Khazix",
+            "kaisa"        => "Kaisa",
+            "nunu"         => "Nunu",
+            _ => char.ToUpper(cleanName[0]) + cleanName.Substring(1).ToLower()
+        };
+    }
+    
+    
     /// <summary>
     /// Scans the cache directory on startup to populate the in-memory cache index.
     /// </summary>
@@ -56,6 +90,29 @@ public class RiotImageCacheService : IDisposable
             Log.Warning(ex, "Failed to scan cache directory");
         }
     }
+    
+    private void MigrateLegacyNames()
+    {
+        var champDir = Path.Combine(_cachePath, "champions");
+        foreach (var file in Directory.GetFiles(champDir, "*.png"))
+        {
+            try
+            {
+                var name = Path.GetFileNameWithoutExtension(file);
+                var normalized = NormalizeChampionName(name);
+                if (normalized != name)
+                {
+                    var newPath = Path.Combine(champDir, $"{normalized}.png");
+                    if (!File.Exists(newPath))
+                        File.Move(file, newPath);
+                }
+            }
+            catch (Exception e)
+            {
+                Log.Warning(e, "Failed to migrate champion names: {File}: {Msg}", file, e.Message);
+            }
+        }
+    }
 
     /// <summary>
     /// Retrieves the local file path for a champion's icon, downloading it from Data Dragon if it is not already present in the cache.
@@ -65,16 +122,13 @@ public class RiotImageCacheService : IDisposable
     /// <returns>The full local path to the champion icon image.</returns>
     public async Task<string> GetChampionIconAsync(string championName, CancellationToken cancellationToken = default)
     {
-        string fileName = $"{championName}.png";
+        var safeName = NormalizeChampionName(championName);
+        string fileName = $"{safeName}.png";
         string localPath = Path.Combine(_cachePath, "champions", fileName);
 
-        if (_cachedFiles.ContainsKey(localPath) || File.Exists(localPath))
-        {
-            _cachedFiles[localPath] = true;
-            return localPath;
-        }
+        if (File.Exists(localPath)) return localPath;
 
-        string url = $"https://ddragon.riotgames.com/cdn/{_version}/img/champion/{fileName}";
+        string url = $"https://ddragon.leagueoflegends.com/cdn/{_version}/img/champion/{fileName}";
         await DownloadImageAsync(url, localPath, cancellationToken);
 
         return localPath;
@@ -100,7 +154,7 @@ public class RiotImageCacheService : IDisposable
             return localPath;
         }
 
-        string url = $"https://ddragon.riotgames.com/cdn/{_version}/img/item/{fileName}";
+        string url = $"https://ddragon.leagueoflegends.com/cdn/{_version}/img/item/{fileName}";
         await DownloadImageAsync(url, localPath, cancellationToken);
 
         return localPath;
