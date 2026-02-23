@@ -1,4 +1,4 @@
-﻿﻿using Discord_Bot_AI.Data;
+﻿using Discord_Bot_AI.Data;
 using Discord;
 using Discord.WebSocket;
 using Discord_Bot_AI.Models;
@@ -264,7 +264,6 @@ public class BotService : IAsyncDisposable
         
         _ = RunPeriodicCacheCleanupAsync(_shutdownCts.Token);
         
-        // Start Politechnika watcher
         _politechnikaWatcher.OnChangeDetected = HandlePolitechnikaChangeAsync;
         _ = _politechnikaWatcher.StartWatchingAsync(_shutdownCts.Token);
     }
@@ -340,10 +339,6 @@ public class BotService : IAsyncDisposable
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("query", ApplicationCommandOptionType.String, "your question", isRequired: true)
                 .AddOption("attachment", ApplicationCommandOptionType.Attachment, "attach an image or document (optional)", isRequired: false))
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("info")
-                .WithDescription("show info about bot")
-                .WithType(ApplicationCommandOptionType.SubCommand))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("unregister")
                 .WithDescription("Use to unregister your League of Legends account")
@@ -536,8 +531,12 @@ public class BotService : IAsyncDisposable
         
         if (result.Success && !string.IsNullOrEmpty(result.Url))
         {
-            sb.AppendLine($"**Zapytanie:** {userQuery}");
-            sb.AppendLine();
+            // Short answer from Gemini first (if available)
+            if (!string.IsNullOrWhiteSpace(result.Answer))
+            {
+                sb.AppendLine($"📚 {result.Answer}");
+                sb.AppendLine();
+            }
             
             if (result.IsFile)
             {
@@ -549,7 +548,7 @@ public class BotService : IAsyncDisposable
                     
                     if (downloadResult.HasValue && downloadResult.Value.Stream != null)
                     {
-                        sb.AppendLine($"**Znaleziono plik ({result.FileType}):** {result.LinkText}");
+                        sb.AppendLine($"**Plik ({result.FileType}):** {result.LinkText}");
                         sb.AppendLine($"*Źródło: {result.SourceUrl}*");
                         
                         await using var stream = downloadResult.Value.Stream;
@@ -558,7 +557,7 @@ public class BotService : IAsyncDisposable
                         return;
                     }
                 }
-                sb.AppendLine($"**Znaleziono plik ({result.FileType}):** {result.LinkText}");
+                sb.AppendLine($"**Plik ({result.FileType}):** {result.LinkText}");
                 if (!downloadInfo.CanDownload && downloadInfo.Reason != null)
                 {
                     sb.AppendLine($"*({downloadInfo.Reason})*");
@@ -567,7 +566,6 @@ public class BotService : IAsyncDisposable
             }
             else
             {
-                sb.AppendLine($"**Znaleziono:** {result.LinkText}");
                 sb.AppendLine($"**Link:** {result.Url}");
             }
             
@@ -576,8 +574,11 @@ public class BotService : IAsyncDisposable
         }
         else
         {
-            sb.AppendLine($"**Zapytanie:** {userQuery}");
-            sb.AppendLine();
+            if (!string.IsNullOrWhiteSpace(result.Answer))
+            {
+                sb.AppendLine($"📚 {result.Answer}");
+                sb.AppendLine();
+            }
             sb.AppendLine($"**Wynik:** {result.Message}");
             sb.AppendLine();
             sb.AppendLine($"**Sprawdź stronę bezpośrednio:** {result.SourceUrl}");
@@ -1011,7 +1012,7 @@ public class BotService : IAsyncDisposable
             return;
         }
         
-        if (_politechnikaWatcher.IsChannelSubscribed(guildId.Value, channelId.Value))
+        if (await _politechnikaWatcher.IsChannelSubscribedAsync(guildId.Value, channelId.Value, _shutdownCts.Token))
         {
             await command.RespondAsync("📚 Ten kanał już obserwuje aktualizacje planów zajęć.", ephemeral: true);
             return;
@@ -1048,7 +1049,7 @@ public class BotService : IAsyncDisposable
             return;
         }
         
-        if (!_politechnikaWatcher.IsChannelSubscribed(guildId.Value, channelId.Value))
+        if (!await _politechnikaWatcher.IsChannelSubscribedAsync(guildId.Value, channelId.Value, _shutdownCts.Token))
         {
             await command.RespondAsync("📚 Ten kanał nie obserwuje aktualizacji planów zajęć.", ephemeral: true);
             return;

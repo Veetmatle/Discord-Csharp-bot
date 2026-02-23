@@ -1,4 +1,4 @@
-﻿﻿﻿﻿using System.Net;
+﻿using System.Net;
 using Discord_Bot_AI.Configuration;
 using Discord_Bot_AI.Data;
 using Discord_Bot_AI.Services;
@@ -41,6 +41,7 @@ public static class ServiceCollectionExtensions
         // Register background watcher services
         services.AddSingleton<PolitechnikaWatcherService>(sp => new PolitechnikaWatcherService(
             sp.GetRequiredService<PolitechnikaService>(),
+            sp.GetRequiredService<IHttpClientFactory>(),
             settings.DataPath));
         
         return services;

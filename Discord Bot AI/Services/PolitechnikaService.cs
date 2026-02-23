@@ -8,6 +8,13 @@ using Serilog;
 namespace Discord_Bot_AI.Services;
 
 /// <summary>
+/// Represents a single link scraped from the Politechnika website.
+/// Using a dedicated type instead of Dictionary avoids silent key-collision losses
+/// when multiple documents share the same clickable text.
+/// </summary>
+public record ScrapedLink(string Text, string Url);
+
+/// <summary>
 /// Service for scraping Politechnika Krakowska WIiT website and finding relevant links
 /// </summary>
 public class PolitechnikaService
@@ -20,7 +27,7 @@ public class PolitechnikaService
     private const long MaxDiscordFileSize = 25 * 1024 * 1024; // 25MB Discord limit
     
     private readonly SemaphoreSlim _scrapeLock = new(1, 1);
-    private Dictionary<string, string> _cachedLinks = new();
+    private List<ScrapedLink> _cachedLinks = new();
     private DateTime _lastScrapeTime = DateTime.MinValue;
     private static readonly TimeSpan CacheExpiration = TimeSpan.FromHours(1);
 
@@ -36,6 +43,7 @@ public class PolitechnikaService
     /// <summary>
     /// Processes a user query about Politechnika Krakowska WIiT and returns
     /// either a direct link, file information, or a text response with source.
+    /// Pre-filters links to keep only the newest versions of duplicate documents.
     /// </summary>
     public async Task<PolitechnikaResponse> ProcessQueryAsync(string userQuery, CancellationToken cancellationToken = default)
     {
@@ -53,13 +61,15 @@ public class PolitechnikaService
                 };
             }
             
-            var prompt = BuildGeminiPrompt(userQuery, links);
+            var filteredLinks = FilterNewestVersions(links);
+            
+            var prompt = BuildGeminiPrompt(userQuery, filteredLinks);
             
             var geminiResponse = await _geminiService.GetAnswerAsync(
                 new Models.GeminiRequest { Prompt = prompt }, 
                 cancellationToken);
             
-            return ParseGeminiResponse(geminiResponse, userQuery, links);
+            return ParseGeminiResponse(geminiResponse, userQuery, filteredLinks);
         }
         catch (Exception ex)
         {
@@ -74,9 +84,95 @@ public class PolitechnikaService
     }
 
     /// <summary>
-    /// Scrapes links from Politechnika WIiT website with caching.
+    /// Pre-filters scraped links to keep only the newest version of each document.
+    /// Groups links by normalized base name, then picks the one with the newest date
+    /// or highest version number in the text/URL.
+    /// Now operates on List&lt;ScrapedLink&gt; so duplicate link texts with different URLs are preserved.
     /// </summary>
-    public async Task<Dictionary<string, string>> GetScrapedLinksAsync(
+    private static List<ScrapedLink> FilterNewestVersions(List<ScrapedLink> links)
+    {
+        var documentExtensions = new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx" };
+        
+        var fileLinks = links.Where(l => documentExtensions.Any(
+            ext => l.Url.EndsWith(ext, StringComparison.OrdinalIgnoreCase))).ToList();
+        var nonFileLinks = links.Where(l => !documentExtensions.Any(
+            ext => l.Url.EndsWith(ext, StringComparison.OrdinalIgnoreCase))).ToList();
+        
+        var groups = fileLinks.GroupBy(l => NormalizeDocumentName(l.Text)).ToList();
+        
+        var result = new List<ScrapedLink>();
+        
+        foreach (var group in groups)
+        {
+            if (group.Count() == 1)
+            {
+                result.Add(group.First());
+                continue;
+            }
+            
+            var best = group
+                .Select(l => new { Link = l, Date = ExtractComparableDate(l.Text + " " + l.Url) })
+                .OrderByDescending(x => x.Date ?? "0000-00-00")
+                .First();
+            
+            result.Add(best.Link);
+            Log.Debug("Filtered document group '{Group}': kept '{Best}' (URL: {Url}) out of {Count} versions",
+                group.Key, best.Link.Text, best.Link.Url, group.Count());
+        }
+        
+        result.AddRange(nonFileLinks);
+        
+        return result;
+    }
+
+    /// <summary>
+    /// Normalizes a document name for grouping - strips dates, versions and whitespace variations.
+    /// </summary>
+    private static string NormalizeDocumentName(string text)
+    {
+        var lower = text.ToLowerInvariant();
+        
+        lower = Regex.Replace(lower, @"\d{1,2}[-./]\d{1,2}[-./]\d{2,4}", "");
+        lower = Regex.Replace(lower, @"\d{4}[-./]\d{1,2}[-./]\d{1,2}", "");
+        lower = Regex.Replace(lower, @"v\.?\s*\d+", "");
+        lower = Regex.Replace(lower, @"\d{1,2}[-./]\d{1,2}", "");
+        lower = Regex.Replace(lower, @"aktualiz\w*", "");
+        lower = Regex.Replace(lower, @"\s+", " ").Trim();
+        return lower;
+    }
+
+    /// <summary>
+    /// Extracts a comparable date string from text for sorting (YYYY-MM-DD format).
+    /// Returns null if no date found.
+    /// </summary>
+    private static string? ExtractComparableDate(string text)
+    {
+        var m1 = Regex.Match(text, @"(\d{1,2})[-./](\d{1,2})[-./](\d{4})");
+        if (m1.Success)
+        {
+            return $"{m1.Groups[3].Value}-{m1.Groups[2].Value.PadLeft(2, '0')}-{m1.Groups[1].Value.PadLeft(2, '0')}";
+        }
+        
+        var m2 = Regex.Match(text, @"(\d{4})[-./](\d{1,2})[-./](\d{1,2})");
+        if (m2.Success)
+        {
+            return $"{m2.Groups[1].Value}-{m2.Groups[2].Value.PadLeft(2, '0')}-{m2.Groups[3].Value.PadLeft(2, '0')}";
+        }
+        
+        var v = Regex.Match(text, @"v\.?\s*(\d+)", RegexOptions.IgnoreCase);
+        if (v.Success)
+        {
+            return $"0000-00-{v.Groups[1].Value.PadLeft(2, '0')}";
+        }
+        
+        return null;
+    }
+
+    /// <summary>
+    /// Scrapes links from Politechnika WIiT website with caching.
+    /// Returns a list of ScrapedLink (text + URL pairs) - preserves duplicates with different URLs.
+    /// </summary>
+    public async Task<List<ScrapedLink>> GetScrapedLinksAsync(
         bool forceRefresh = false, CancellationToken cancellationToken = default)
     {
         if (!forceRefresh && DateTime.UtcNow - _lastScrapeTime < CacheExpiration && _cachedLinks.Count > 0)
@@ -96,7 +192,8 @@ public class PolitechnikaService
             Log.Information("Scraping Politechnika WIiT website{ForceRefresh}...", 
                 forceRefresh ? " (forced refresh)" : "");
             
-            var allLinks = new Dictionary<string, string>();
+            var seenUrls = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            var allLinks = new List<ScrapedLink>();
             
             var pagesToScrape = new[]
             {
@@ -132,7 +229,10 @@ public class PolitechnikaService
                     var pageLinks = await ScrapePageAsync(httpClient, pageUrl, cancellationToken);
                     foreach (var link in pageLinks)
                     {
-                        allLinks.TryAdd(link.Key, link.Value);
+                        if (seenUrls.Add(link.Url))
+                        {
+                            allLinks.Add(link);
+                        }
                     }
                     
                     await Task.Delay(200, cancellationToken);
@@ -146,7 +246,7 @@ public class PolitechnikaService
             _cachedLinks = allLinks;
             _lastScrapeTime = DateTime.UtcNow;
             
-            Log.Information("Scraped {Count} links from Politechnika website", allLinks.Count);
+            Log.Information("Scraped {Count} unique links from Politechnika website", allLinks.Count);
             return allLinks;
         }
         finally
@@ -156,12 +256,13 @@ public class PolitechnikaService
     }
 
     /// <summary>
-    /// Scrapes a single page for links.
+    /// Scrapes a single page for links. Returns all relevant links as ScrapedLink list.
+    /// Two links with the same text but different URLs are both preserved.
     /// </summary>
-    private async Task<Dictionary<string, string>> ScrapePageAsync(
+    private async Task<List<ScrapedLink>> ScrapePageAsync(
         HttpClient httpClient, string url, CancellationToken cancellationToken)
     {
-        var links = new Dictionary<string, string>();
+        var links = new List<ScrapedLink>();
         
         var html = await httpClient.GetStringAsync(url, cancellationToken);
         var doc = new HtmlDocument();
@@ -184,7 +285,7 @@ public class PolitechnikaService
             
             if (IsRelevantLink(fullUrl, text))
             {
-                links.TryAdd(text, fullUrl);
+                links.Add(new ScrapedLink(text, fullUrl));
             }
         }
 
@@ -249,15 +350,17 @@ public class PolitechnikaService
 
     /// <summary>
     /// Builds the Gemini prompt for finding the best matching link.
-    /// Uses JSON response format for reliable parsing.
+    /// Uses JSON response format with short answer and URL for reliable parsing.
     /// </summary>
-    private static string BuildGeminiPrompt(string userQuery, Dictionary<string, string> links)
+    private static string BuildGeminiPrompt(string userQuery, List<ScrapedLink> links)
     {
         var sb = new StringBuilder();
         
         sb.AppendLine("Jesteś inteligentnym asystentem studenta Wydziału Informatyki i Telekomunikacji Politechniki Krakowskiej (WIiT PK).");
         sb.AppendLine();
-        sb.AppendLine("Zadanie: Na podstawie dostarczonej listy linków (tekst + URL) wyciągniętych ze strony it.pk.edu.pl, musisz wskazać JEDEN adres URL, który najlepiej odpowiada na zapytanie użytkownika.");
+        sb.AppendLine("Zadanie: Na podstawie dostarczonej listy linków (tekst + URL) wyciągniętych ze strony it.pk.edu.pl:");
+        sb.AppendLine("1. Napisz KRÓTKĄ (1-2 zdania) odpowiedź po polsku, bezpośrednio odpowiadając na pytanie studenta.");
+        sb.AppendLine("2. Wskaż JEDEN najlepszy URL pasujący do zapytania.");
         sb.AppendLine();
         sb.AppendLine("Kryteria wyboru:");
         sb.AppendLine("1. Aktualność: Jeśli na liście jest kilka podobnych plików (np. plany zajęć), zawsze wybieraj ten z najnowszą datą w nazwie lub opisie.");
@@ -266,8 +369,13 @@ public class PolitechnikaService
         sb.AppendLine();
         sb.AppendLine("WAŻNE - Format odpowiedzi:");
         sb.AppendLine("Odpowiedz TYLKO w formacie JSON (bez markdown, bez ```json):");
-        sb.AppendLine("- Jeśli znaleziono: {\"url\": \"https://...\"}");
-        sb.AppendLine("- Jeśli nie znaleziono: {\"url\": \"NOT_FOUND\"}");
+        sb.AppendLine("- Jeśli znaleziono: {\"answer\": \"Krótka odpowiedź dla studenta.\", \"url\": \"https://...\"}");
+        sb.AppendLine("- Jeśli nie znaleziono: {\"answer\": \"Nie znalazłem tego na stronie WIiT.\", \"url\": \"NOT_FOUND\"}");
+        sb.AppendLine();
+        sb.AppendLine("Przykłady dobrej odpowiedzi w polu 'answer':");
+        sb.AppendLine("- \"Aktualny plan zajęć dla Informatyki I stopnia (aktualizacja 18.02.2026).\"");
+        sb.AppendLine("- \"Harmonogram sesji zimowej 2025/2026 jest dostępny jako plik PDF.\"");
+        sb.AppendLine("- \"Regulamin praktyk studenckich na WIiT PK.\"");
         sb.AppendLine();
         sb.AppendLine($"Zapytanie użytkownika: {userQuery}");
         sb.AppendLine();
@@ -275,22 +383,23 @@ public class PolitechnikaService
         
         foreach (var link in links)
         {
-            sb.AppendLine($"- {link.Key}: {link.Value}");
+            sb.AppendLine($"- {link.Text}: {link.Url}");
         }
 
         return sb.ToString();
     }
 
     /// <summary>
-    /// Parses the Gemini response (JSON format) and builds the final response.
-    /// Validates that the returned URL exists in the scraped links list.
+    /// Parses the Gemini response (JSON format with 'answer' and 'url' fields)
+    /// and builds the final response. Validates that the returned URL exists in the scraped links list.
     /// </summary>
     private static PolitechnikaResponse ParseGeminiResponse(
-        string geminiResponse, string userQuery, Dictionary<string, string> links)
+        string geminiResponse, string userQuery, List<ScrapedLink> links)
     {
         var response = geminiResponse.Trim();
         
         string? foundUrl = null;
+        string? answer = null;
         
         try
         {
@@ -303,6 +412,10 @@ public class PolitechnikaService
             if (doc.RootElement.TryGetProperty("url", out var urlElement))
             {
                 foundUrl = urlElement.GetString();
+            }
+            if (doc.RootElement.TryGetProperty("answer", out var answerElement))
+            {
+                answer = answerElement.GetString();
             }
         }
         catch (JsonException)
@@ -321,6 +434,7 @@ public class PolitechnikaService
             return new PolitechnikaResponse
             {
                 Success = false,
+                Answer = answer,
                 Message = $"Nie znaleziono pasującego linku dla zapytania: \"{userQuery}\". " +
                          "Spróbuj przeformułować pytanie lub sprawdź stronę bezpośrednio.",
                 SourceUrl = StudentPageUrl
@@ -328,30 +442,31 @@ public class PolitechnikaService
         }
         
         var matchingLink = links.FirstOrDefault(l => 
-            l.Value.Equals(foundUrl, StringComparison.OrdinalIgnoreCase));
+            l.Url.Equals(foundUrl, StringComparison.OrdinalIgnoreCase));
         
-        if (matchingLink.Key == null)
+        if (matchingLink == null)
         {
             Log.Warning("Gemini returned URL not in scraped list: {Url}", foundUrl);
             
             matchingLink = links.FirstOrDefault(l => 
-                foundUrl.Contains(l.Value, StringComparison.OrdinalIgnoreCase) ||
-                l.Value.Contains(foundUrl, StringComparison.OrdinalIgnoreCase));
+                foundUrl.Contains(l.Url, StringComparison.OrdinalIgnoreCase) ||
+                l.Url.Contains(foundUrl, StringComparison.OrdinalIgnoreCase));
             
-            if (matchingLink.Key == null)
+            if (matchingLink == null)
             {
                 return new PolitechnikaResponse
                 {
                     Success = false,
+                    Answer = answer,
                     Message = "Znaleziony link nie został zweryfikowany. Spróbuj ponownie lub sprawdź stronę bezpośrednio.",
                     SourceUrl = StudentPageUrl
                 };
             }
             
-            foundUrl = matchingLink.Value;
+            foundUrl = matchingLink.Url;
         }
         
-        var linkText = matchingLink.Key ?? "Znaleziony link";
+        var linkText = matchingLink.Text;
         var isFile = IsFileUrl(foundUrl);
         
         return new PolitechnikaResponse
@@ -359,6 +474,7 @@ public class PolitechnikaService
             Success = true,
             Url = foundUrl,
             LinkText = linkText,
+            Answer = answer,
             IsFile = isFile,
             FileType = isFile ? GetFileType(foundUrl) : null,
             Message = isFile 
@@ -529,6 +645,7 @@ public class PolitechnikaResponse
     public bool Success { get; set; }
     public string? Url { get; set; }
     public string? LinkText { get; set; }
+    public string? Answer { get; set; }
     public bool IsFile { get; set; }
     public string? FileType { get; set; }
     public string Message { get; set; } = string.Empty;

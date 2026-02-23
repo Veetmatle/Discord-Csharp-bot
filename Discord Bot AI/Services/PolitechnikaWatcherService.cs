@@ -12,6 +12,7 @@ namespace Discord_Bot_AI.Services;
 public class PolitechnikaWatcherService : IDisposable
 {
     private readonly PolitechnikaService _politechnikaService;
+    private readonly IHttpClientFactory _httpClientFactory;
     private readonly string _statePath;
     
     private readonly SemaphoreSlim _stateLock = new(1, 1);
@@ -29,13 +30,14 @@ public class PolitechnikaWatcherService : IDisposable
     private static readonly WatchPattern[] WatchPatterns =
     {
         new("Informatyka I stopień - plan zajęć", 
-            new[] { "plan", "informatyka", "i stopnia", "i stopień" },
-            new[] { "ii stopnia", "ii stopień" })
+            new[] { "Kierunek", "informatyka", "I stop" },
+            new[] { "matematyka", "stosowana" })
     };
 
-    public PolitechnikaWatcherService(PolitechnikaService politechnikaService, string dataPath)
+    public PolitechnikaWatcherService(PolitechnikaService politechnikaService, IHttpClientFactory httpClientFactory, string dataPath)
     {
         _politechnikaService = politechnikaService;
+        _httpClientFactory = httpClientFactory;
         _statePath = Path.Combine(dataPath, "pk_state.json");
     }
 
@@ -43,11 +45,14 @@ public class PolitechnikaWatcherService : IDisposable
     
     public bool IsRunning => _isRunning;
     
-    public List<WatcherSubscription> GetSubscriptions()
+    /// <summary>
+    /// Returns a snapshot of current subscriptions. Thread-safe.
+    /// </summary>
+    public async Task<List<WatcherSubscription>> GetSubscriptionsAsync(CancellationToken ct = default)
     {
-        _fileLock.EnterReadLock();
+        await _stateLock.WaitAsync(ct);
         try { return _state.Subscriptions.ToList(); }
-        finally { _fileLock.ExitReadLock(); }
+        finally { _stateLock.Release(); }
     }
 
     public async Task<bool> SubscribeChannelAsync(ulong guildId, ulong channelId, ulong startedByUserId, CancellationToken ct = default)
@@ -89,11 +94,14 @@ public class PolitechnikaWatcherService : IDisposable
         finally { _stateLock.Release(); }
     }
 
-    public bool IsChannelSubscribed(ulong guildId, ulong channelId)
+    /// <summary>
+    /// Checks if a specific channel is subscribed. Thread-safe.
+    /// </summary>
+    public async Task<bool> IsChannelSubscribedAsync(ulong guildId, ulong channelId, CancellationToken ct = default)
     {
-        _fileLock.EnterReadLock();
+        await _stateLock.WaitAsync(ct);
         try { return _state.Subscriptions.Any(s => s.GuildId == guildId && s.ChannelId == channelId); }
-        finally { _fileLock.ExitReadLock(); }
+        finally { _stateLock.Release(); }
     }
 
     public async Task StartWatchingAsync(CancellationToken externalToken = default)
@@ -149,17 +157,43 @@ public class PolitechnikaWatcherService : IDisposable
         if (currentLinks.Count == 0) { Log.Warning("No links scraped"); return; }
 
         var changes = new List<DetectedChange>();
+        var isFirstRun = _state.KnownLinks.Count == 0;
 
         foreach (var pattern in WatchPatterns)
         {
-            foreach (var (linkText, linkUrl) in FindMatchingLinks(currentLinks, pattern))
+            foreach (var link in FindMatchingLinks(currentLinks, pattern))
             {
+                var linkText = link.Text;
+                var linkUrl = link.Url;
                 var currentDate = ExtractDateFromText(linkText);
                 var linkKey = NormalizeLinkKey(linkUrl);
                 
                 if (_state.KnownLinks.TryGetValue(linkKey, out var prev))
                 {
-                    if (currentDate != null && prev.ExtractedDate != currentDate)
+                    var dateChanged = currentDate != null && prev.ExtractedDate != currentDate;
+                    var textChanged = !string.Equals(prev.LinkText, linkText, StringComparison.OrdinalIgnoreCase);
+                    var newDateAppeared = prev.ExtractedDate == null && currentDate != null;
+                    
+                    var fileModified = false;
+                    if (!dateChanged && !newDateAppeared && IsFileLink(linkUrl))
+                    {
+                        var lastModified = await GetLastModifiedAsync(linkUrl, ct);
+                        if (lastModified != null && prev.LastModifiedHeader != null
+                            && lastModified != prev.LastModifiedHeader)
+                        {
+                            fileModified = true;
+                            Log.Information("FILE MODIFIED on server: {Pattern} Last-Modified {Old} -> {New}",
+                                pattern.Name, prev.LastModifiedHeader, lastModified);
+                        }
+                        _state.KnownLinks[linkKey] = new LinkInfo
+                        {
+                            LinkText = linkText, LinkUrl = linkUrl,
+                            ExtractedDate = currentDate, LastSeen = DateTime.UtcNow,
+                            LastModifiedHeader = lastModified ?? prev.LastModifiedHeader
+                        };
+                    }
+                    
+                    if (dateChanged || (textChanged && newDateAppeared) || fileModified)
                     {
                         changes.Add(new DetectedChange
                         {
@@ -167,10 +201,11 @@ public class PolitechnikaWatcherService : IDisposable
                             LinkText = linkText, LinkUrl = linkUrl,
                             OldDate = prev.ExtractedDate, NewDate = currentDate
                         });
-                        Log.Information("UPDATE: {Pattern} date {Old} -> {New}", pattern.Name, prev.ExtractedDate, currentDate);
+                        Log.Information("UPDATE: {Pattern} date {Old} -> {New} (text: {TextChanged}, file: {FileModified})",
+                            pattern.Name, prev.ExtractedDate ?? "null", currentDate ?? "null", textChanged, fileModified);
                     }
                 }
-                else
+                else if (!isFirstRun)
                 {
                     changes.Add(new DetectedChange
                     {
@@ -179,12 +214,26 @@ public class PolitechnikaWatcherService : IDisposable
                     });
                     Log.Information("NEW: {Pattern} - {Link}", pattern.Name, linkText);
                 }
-
-                _state.KnownLinks[linkKey] = new LinkInfo
+                else
                 {
-                    LinkText = linkText, LinkUrl = linkUrl,
-                    ExtractedDate = currentDate, LastSeen = DateTime.UtcNow
-                };
+                    Log.Debug("First run - cataloging link: {Link}", linkText);
+                }
+
+                if (!_state.KnownLinks.ContainsKey(linkKey) || _state.KnownLinks[linkKey].LinkText != linkText)
+                {
+                    var lastMod = IsFileLink(linkUrl) ? await GetLastModifiedAsync(linkUrl, ct) : null;
+                    _state.KnownLinks[linkKey] = new LinkInfo
+                    {
+                        LinkText = linkText, LinkUrl = linkUrl,
+                        ExtractedDate = currentDate, LastSeen = DateTime.UtcNow,
+                        LastModifiedHeader = lastMod ?? _state.KnownLinks.GetValueOrDefault(linkKey)?.LastModifiedHeader
+                    };
+                }
+                else
+                {
+                    _state.KnownLinks[linkKey].LastSeen = DateTime.UtcNow;
+                    _state.KnownLinks[linkKey].ExtractedDate = currentDate;
+                }
             }
         }
 
@@ -210,27 +259,87 @@ public class PolitechnikaWatcherService : IDisposable
         }
     }
 
-    private static List<(string, string)> FindMatchingLinks(Dictionary<string, string> links, WatchPattern pattern)
+    /// <summary>
+    /// Checks if a URL points to a downloadable document file.
+    /// </summary>
+    private static bool IsFileLink(string url)
     {
-        return links.Where(kv =>
-        {
-            var combined = (kv.Key + " " + kv.Value).ToLowerInvariant();
-            return pattern.IncludeKeywords.All(k => combined.Contains(k)) &&
-                   !pattern.ExcludeKeywords.Any(k => combined.Contains(k));
-        }).Select(kv => (kv.Key, kv.Value)).ToList();
+        var extensions = new[] { ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx" };
+        return extensions.Any(ext => url.EndsWith(ext, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Fetches the Last-Modified header from a URL using a HEAD request.
+    /// Returns the value as string for comparison, or null if unavailable.
+    /// </summary>
+    private async Task<string?> GetLastModifiedAsync(string url, CancellationToken ct)
+    {
+        try
+        {
+            using var httpClient = _httpClientFactory.CreateClient();
+            httpClient.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64)");
+            httpClient.Timeout = TimeSpan.FromSeconds(10);
+            
+            using var request = new HttpRequestMessage(HttpMethod.Head, url);
+            using var response = await httpClient.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            
+            if (response.Content.Headers.LastModified.HasValue)
+            {
+                return response.Content.Headers.LastModified.Value.ToString("O");
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Debug(ex, "Could not fetch Last-Modified for {Url}", url);
+        }
+        return null;
+    }
+
+    /// <summary>
+    /// Finds links matching a watch pattern from the scraped link list.
+    /// </summary>
+    private static List<ScrapedLink> FindMatchingLinks(List<ScrapedLink> links, WatchPattern pattern)
+    {
+        return links.Where(l =>
+        {
+            var combined = (l.Text + " " + l.Url).ToLowerInvariant();
+            return pattern.IncludeKeywords.All(k => combined.Contains(k)) &&
+                   !pattern.ExcludeKeywords.Any(k => combined.Contains(k));
+        }).ToList();
+    }
+
+    /// <summary>
+    /// Extracts date or version information from link text.
+    /// Supports multiple date formats commonly used on PK website.
+    /// </summary>
     private static string? ExtractDateFromText(string text)
     {
-        string[] patterns = { @"(\d{1,2})[-./](\d{1,2})[-./](\d{4})", @"(\d{4})[-./](\d{1,2})[-./](\d{1,2})",
-            @"(\d{1,2})[-./](\d{1,2})(?!\d)", @"aktualiz\w*\s*(\d{1,2})[-./](\d{1,2})" };
+        var lowerText = text.ToLowerInvariant();
+        
+        string[] patterns = 
+        { 
+            @"(\d{1,2})[-./](\d{1,2})[-./](\d{4})",
+            @"(\d{4})[-./](\d{1,2})[-./](\d{1,2})",  
+            @"(\d{1,2})[-./](\d{1,2})(?!\d)",      
+            @"aktualiz\w*[\s:]*(\d{1,2})[-./](\d{1,2})",  
+            @"z\s+dnia\s+(\d{1,2})[-./](\d{1,2})",        
+            @"semestr\s*(letni|zimowy)\s*(\d{4})",        
+            @"(\d{4})[/](\d{4})",                          
+        };
+        
         foreach (var p in patterns)
         {
-            var m = Regex.Match(text, p, RegexOptions.IgnoreCase);
-            if (m.Success) return m.Value.ToLowerInvariant();
+            var m = Regex.Match(lowerText, p, RegexOptions.IgnoreCase);
+            if (m.Success) return m.Value;
         }
-        var v = Regex.Match(text, @"v\.?\s*(\d+)", RegexOptions.IgnoreCase);
-        return v.Success ? $"v{v.Groups[1].Value}" : null;
+        
+        var v = Regex.Match(lowerText, @"v\.?\s*(\d+)", RegexOptions.IgnoreCase);
+        if (v.Success) return $"v{v.Groups[1].Value}";
+        
+        var urlDateMatch = Regex.Match(text, @"(\d{4})(\d{2})(\d{2})", RegexOptions.None);
+        if (urlDateMatch.Success) return urlDateMatch.Value;
+        
+        return null;
     }
 
     private static string NormalizeLinkKey(string url) => new Uri(url).GetLeftPart(UriPartial.Path).ToLowerInvariant();
@@ -329,4 +438,5 @@ public class LinkInfo
     public string LinkUrl { get; set; } = "";
     public string? ExtractedDate { get; set; }
     public DateTime LastSeen { get; set; }
+    public string? LastModifiedHeader { get; set; }
 }
