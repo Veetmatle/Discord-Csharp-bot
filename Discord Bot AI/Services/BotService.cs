@@ -316,8 +316,8 @@ public class BotService : IAsyncDisposable
         
         _ = RunPeriodicCacheCleanupAsync(_shutdownCts.Token);
         
-        _politechnikaWatcher.OnChangeDetected = HandlePolitechnikaChangeAsync;
-        _ = _politechnikaWatcher.StartWatchingAsync(_shutdownCts.Token);
+        // _politechnikaWatcher.OnChangeDetected = HandlePolitechnikaChangeAsync;
+        // _ = _politechnikaWatcher.StartWatchingAsync(_shutdownCts.Token);
         
         _agentService.OnTaskCompleted = HandleAgentTaskCompletedAsync;
         _ = _agentService.StartAsync(_shutdownCts.Token);
@@ -426,14 +426,14 @@ public class BotService : IAsyncDisposable
                 .WithDescription("Search Politechnika Krakowska WIiT resources (plans, schedules, documents)")
                 .WithType(ApplicationCommandOptionType.SubCommand)
                 .AddOption("query", ApplicationCommandOptionType.String, "What are you looking for? (e.g. 'plan zajęć informatyka I stopień')", isRequired: true))
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("pk-watch-start")
-                .WithDescription("Start watching for schedule updates on this channel")
-                .WithType(ApplicationCommandOptionType.SubCommand))
-            .AddOption(new SlashCommandOptionBuilder()
-                .WithName("pk-watch-stop")
-                .WithDescription("Stop watching for schedule updates on this channel")
-                .WithType(ApplicationCommandOptionType.SubCommand))
+            // .AddOption(new SlashCommandOptionBuilder()
+            //     .WithName("pk-watch-start")
+            //     .WithDescription("Start watching for schedule updates on this channel")
+            //     .WithType(ApplicationCommandOptionType.SubCommand))
+            // .AddOption(new SlashCommandOptionBuilder()
+            //     .WithName("pk-watch-stop")
+            //     .WithDescription("Stop watching for schedule updates on this channel")
+            //     .WithType(ApplicationCommandOptionType.SubCommand))
             .AddOption(new SlashCommandOptionBuilder()
                 .WithName("agent-task")
                 .WithDescription("Submit a task to the AI agent (code generation, analysis, etc.)")

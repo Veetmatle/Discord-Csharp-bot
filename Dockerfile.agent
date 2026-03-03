@@ -1,5 +1,5 @@
 ﻿# ============================================================
-# OpenClaw Agent - AI Development Agent with Claude
+# OpenClaw Agent - AI Development Agent with Gemini
 # Multi-stage build for optimized image size
 # ============================================================
 
@@ -44,7 +44,7 @@ FROM python:3.12-slim-bookworm AS final
 # Labels for container metadata
 LABEL maintainer="ahmanamjardir" \
       version="1.0" \
-      description="OpenClaw AI Agent with Claude, .NET SDK, Python, and Node.js"
+      description="OpenClaw AI Agent with Gemini, .NET SDK, Python, and Node.js"
 
 # Environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \

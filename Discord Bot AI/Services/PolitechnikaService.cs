@@ -198,14 +198,6 @@ public class PolitechnikaService
             var pagesToScrape = new[]
             {
                 "https://it.pk.edu.pl/studenci/",
-                "https://it.pk.edu.pl/studenci/studia-i-stopnia/",
-                "https://it.pk.edu.pl/studenci/studia-ii-stopnia/",
-                "https://it.pk.edu.pl/studenci/harmonogramy/",
-                "https://it.pk.edu.pl/studenci/plany-zajec/",
-                "https://it.pk.edu.pl/studenci/praktyki-i-staze/",
-                "https://it.pk.edu.pl/studenci/regulaminy-i-dokumenty/",
-                "https://it.pk.edu.pl/studenci/stypendia/",
-                "https://it.pk.edu.pl/studenci/prace-dyplomowe/",
                 "https://it.pk.edu.pl/studenci/na-studiach/",
                 "https://it.pk.edu.pl/studenci/na-studiach/rozklady-zajec/",
                 "https://it.pk.edu.pl/studenci/na-studiach/dyplomy-egzamin-dyplomowy/",
@@ -213,7 +205,25 @@ public class PolitechnikaService
                 "https://it.pk.edu.pl/studenci/na-studiach/organizacja-roku-akademickiego-2025-2026-r/",
                 "https://it.pk.edu.pl/studenci/na-studiach/praktyki/",
                 "https://it.pk.edu.pl/studenci/na-studiach/zasady-kwalifikacji-studentow-na-przedmioty-wybieralne/",
-                "https://it.pk.edu.pl/studenci/na-studiach/konkursy-na-prace-dyplomowe/"
+                "https://it.pk.edu.pl/studenci/na-studiach/konkursy-na-prace-dyplomowe/",
+                "https://it.pk.edu.pl/wydzial/wladze-dziekanskie/",
+                "https://it.pk.edu.pl/wydzial/akty-prawne/",
+                "https://it.pk.edu.pl/wydzial/nauczyciele-akademiccy/",
+                "https://it.pk.edu.pl/studenci/microsoft-azure-for-education/",
+                "https://it.pk.edu.pl/studenci/kola-naukowe/",
+                "https://it.pk.edu.pl/studenci/w-dziekanacie/druki-podania-i-terminy/",
+                "https://it.pk.edu.pl/studenci/w-dziekanacie/oplaty-podczas-studiow/",
+                "https://it.pk.edu.pl/studenci/w-dziekanacie/godziny-przyjec-dziekanatu/",
+                "https://it.pk.edu.pl/studenci/w-dziekanacie/najczesciej-zadawane-pytania/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/nowa-specjalnosc-cyberbezpieczenstwo/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/nowa-specjalnosc-data-science/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/informatyka/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/matematyka/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/nowy-kierunek-matematyka-stosowana/",
+                "https://it.pk.edu.pl/studia/studia-stacjonarne/nowa-specjalnosc-systemy-inteligentne-i-rozszerzona-rzeczywistosc/",
+                "https://it.pk.edu.pl/kompetencje-z-zakresu-ai/",
+                "https://it.pk.edu.pl/studia/programy-studiow/program-studiow-2025-2026/",
+                "https://faculty.it.pk.edu.pl"
             };
 
             using var httpClient = _httpClientFactory.CreateClient(HttpClientNames.GeminiApi);

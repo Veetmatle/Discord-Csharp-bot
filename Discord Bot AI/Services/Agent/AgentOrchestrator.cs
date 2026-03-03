@@ -143,7 +143,7 @@ public class AgentOrchestrator : IAgentOrchestrator, IDisposable
                 TaskId = task.Id,
                 Prompt = task.Prompt,
                 DocumentContent = task.PdfContent,
-                Model = _settings.AnthropicModel,
+                Model = _settings.GeminiAgentModel,
                 MaxIterations = maxRetries,
                 TimeoutSeconds = timeoutMinutes * 60
             };

@@ -70,7 +70,7 @@ public class AgentApiRequest
     public string? DocumentContent { get; set; }
     
     [JsonPropertyName("Model")]
-    public string Model { get; set; } = "gemini-2.0-flash-exp";
+    public string Model { get; set; } = "gemini-2.5-flash";
     
     [JsonPropertyName("MaxIterations")]
     public int MaxIterations { get; set; } = 3;

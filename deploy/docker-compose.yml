@@ -29,7 +29,7 @@ services:
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}
       - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-3}
       - AGENT_MAX_CONCURRENT_TASKS=${AGENT_MAX_CONCURRENT_TASKS:-2}
-      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
 
     # Persistent volumes
     # NOTE: bot-cache is NOT mounted to preserve static assets baked into the image
@@ -71,7 +71,7 @@ services:
         max-file: "3"
 
   # --------------------------------------------------------
-  # OpenClaw Agent (Python + Claude API)
+  # OpenClaw Agent (Python + Gemini API)
   # Pre-built image from Docker Hub
   # --------------------------------------------------------
   openclaw:
@@ -82,7 +82,7 @@ services:
     # Agent configuration
     environment:
       - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.0-flash-exp}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
       - PORT=8080
       - MAX_ITERATIONS=${AGENT_MAX_RETRIES:-3}
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}

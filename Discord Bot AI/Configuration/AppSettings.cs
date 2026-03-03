@@ -39,9 +39,9 @@ public sealed class AppSettings
     public int AgentMaxConcurrentTasks { get; init; } = 2;
     
     /// <summary>
-    /// Anthropic model identifier used by the OpenClaw agent (e.g. claude-sonnet-4-20250514).
+    /// Gemini model identifier used by the OpenClaw agent (e.g. gemini-2.5-flash).
     /// </summary>
-    public string AnthropicModel { get; init; } = "claude-sonnet-4-20250514";
+    public string GeminiAgentModel { get; init; } = "gemini-2.5-flash";
     
     /// <summary>
     /// Creates AppSettings from an IConfigurationProvider.
@@ -62,7 +62,7 @@ public sealed class AppSettings
             AgentSessionTimeoutMinutes = int.TryParse(provider.GetValue("AGENT_SESSION_TIMEOUT_MINUTES"), out var timeout) ? timeout : 10,
             AgentMaxRetries = int.TryParse(provider.GetValue("AGENT_MAX_RETRIES"), out var retries) ? retries : 3,
             AgentMaxConcurrentTasks = int.TryParse(provider.GetValue("AGENT_MAX_CONCURRENT_TASKS"), out var concurrent) ? concurrent : 2,
-            AnthropicModel = provider.GetValue("ANTHROPIC_MODEL") ?? "claude-sonnet-4-20250514"
+            GeminiAgentModel = provider.GetValue("GEMINI_MODEL") ?? "gemini-2.5-flash"
         };
     }
 }
