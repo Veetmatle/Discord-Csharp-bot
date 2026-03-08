@@ -1,5 +1,5 @@
 ﻿# ============================================================
-# OpenClaw Agent - AI Development Agent with Gemini
+# OpenClaw Agent - AI Development Agent with Claude (Anthropic)
 # Multi-stage build for optimized image size
 # ============================================================
 
@@ -44,7 +44,7 @@ FROM python:3.12-slim-bookworm AS final
 # Labels for container metadata
 LABEL maintainer="ahmanamjardir" \
       version="1.0" \
-      description="OpenClaw AI Agent with Gemini, .NET SDK, Python, and Node.js"
+      description="OpenClaw AI Agent with Claude (Anthropic), .NET SDK, Python, and Node.js"
 
 # Environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -55,9 +55,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     DOTNET_NOLOGO=1 \
     PATH="/usr/share/dotnet:/opt/venv/bin:$PATH" \
     WORKSPACE_DIR=/workspace \
-    PORT=8080
+    PORT=8080 \
+    CHROME_BIN=/usr/bin/chromium \
+    CHROMEDRIVER_PATH=/usr/bin/chromedriver
 
-# Install runtime dependencies
+# Install runtime dependencies + Chromium for Selenium
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     wget \
@@ -67,6 +69,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     libicu72 \
     libssl3 \
+    chromium \
+    chromium-driver \
+    fonts-liberation \
+    libnss3 \
+    libxss1 \
     && rm -rf /var/lib/apt/lists/* \
     && apt-get clean
 
@@ -121,6 +128,7 @@ USER agentuser
 RUN dotnet --version \
     && node --version \
     && python --version \
+    && chromium --version \
     && /opt/venv/bin/pip list
 
 # Expose port

@@ -31,7 +31,7 @@ public sealed class AppSettings
     /// <summary>
     /// Maximum self-correction iterations the agent may attempt per task.
     /// </summary>
-    public int AgentMaxRetries { get; init; } = 3;
+    public int AgentMaxRetries { get; init; } = 7;
     
     /// <summary>
     /// Maximum number of concurrent agent tasks in the queue.
@@ -39,9 +39,9 @@ public sealed class AppSettings
     public int AgentMaxConcurrentTasks { get; init; } = 2;
     
     /// <summary>
-    /// Gemini model identifier used by the OpenClaw agent (e.g. gemini-2.5-flash).
+    /// Anthropic Claude model identifier used by the OpenClaw agent (e.g. claude-sonnet-4-20250514).
     /// </summary>
-    public string GeminiAgentModel { get; init; } = "gemini-2.5-flash";
+    public string AnthropicAgentModel { get; init; } = "claude-sonnet-4-20250514";
     
     /// <summary>
     /// Creates AppSettings from an IConfigurationProvider.
@@ -60,9 +60,9 @@ public sealed class AppSettings
             OpenClawBaseUrl = provider.GetValue("OPENCLAW_BASE_URL") ?? "http://openclaw:8080",
             AgentSharedVolumePath = provider.GetValue("AGENT_SHARED_VOLUME_PATH") ?? "/app/agent-output",
             AgentSessionTimeoutMinutes = int.TryParse(provider.GetValue("AGENT_SESSION_TIMEOUT_MINUTES"), out var timeout) ? timeout : 10,
-            AgentMaxRetries = int.TryParse(provider.GetValue("AGENT_MAX_RETRIES"), out var retries) ? retries : 3,
+            AgentMaxRetries = int.TryParse(provider.GetValue("AGENT_MAX_RETRIES"), out var retries) ? retries : 7,
             AgentMaxConcurrentTasks = int.TryParse(provider.GetValue("AGENT_MAX_CONCURRENT_TASKS"), out var concurrent) ? concurrent : 2,
-            GeminiAgentModel = provider.GetValue("GEMINI_MODEL") ?? "gemini-2.5-flash"
+            AnthropicAgentModel = provider.GetValue("ANTHROPIC_MODEL") ?? "claude-sonnet-4-20250514"
         };
     }
 }

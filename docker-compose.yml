@@ -18,9 +18,9 @@
       - OPENCLAW_BASE_URL=http://openclaw:8080
       - AGENT_SHARED_VOLUME_PATH=/app/agent-output
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}
-      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-3}
+      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-7}
       - AGENT_MAX_CONCURRENT_TASKS=${AGENT_MAX_CONCURRENT_TASKS:-2}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
     
     # Persistent volumes for data, logs and shared agent output
     # NOTE: bot-cache is NOT mounted - static assets are baked into the image
@@ -70,10 +70,10 @@
     
     # Agent API key from .env
     environment:
-      - GEMINI_API_KEY=${GEMINI_API_KEY}
-      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-2.5-flash}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
+      - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
       - PORT=8080
-      - MAX_ITERATIONS=${AGENT_MAX_RETRIES:-3}
+      - MAX_ITERATIONS=${AGENT_MAX_RETRIES:-7}
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}
       - MAX_CONCURRENT_TASKS=${AGENT_MAX_CONCURRENT_TASKS:-2}
       - WORKSPACE_DIR=/workspace
