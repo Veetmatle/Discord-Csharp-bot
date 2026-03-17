@@ -9,7 +9,7 @@ namespace Discord_Bot_AI.Services.Agent;
 
 /// <summary>
 /// HTTP client for communicating with the OpenClaw agent container.
-/// Implements IAgentClient to allow swapping backend implementations.
+/// Files are transferred as base64 over HTTP — no shared Docker volume required.
 /// </summary>
 public class OpenClawAgentClient : IAgentClient
 {
@@ -19,19 +19,15 @@ public class OpenClawAgentClient : IAgentClient
     private DateTime _lastRequestTime = DateTime.MinValue;
     private const int MinRequestIntervalMs = 500;
 
-    /// <summary>
-    /// Initializes the client with HTTP factory and agent base URL from settings.
-    /// </summary>
     public OpenClawAgentClient(IHttpClientFactory httpClientFactory, AppSettings settings)
     {
         _httpClientFactory = httpClientFactory;
         _baseUrl = settings.OpenClawBaseUrl?.TrimEnd('/') ?? "http://openclaw:8080";
     }
-    
+
     public async Task<string> SubmitTaskAsync(AgentApiRequest request, CancellationToken cancellationToken = default)
     {
         await ThrottleAsync(cancellationToken);
-
         using var client = _httpClientFactory.CreateClient(HttpClientNames.OpenClawApi);
 
         try
@@ -40,7 +36,7 @@ public class OpenClawAgentClient : IAgentClient
 
             if (response.StatusCode == HttpStatusCode.TooManyRequests)
             {
-                Log.Warning("Agent API rate limited (429). Will retry on next cycle.");
+                Log.Warning("Agent API rate limited (429).");
                 throw new HttpRequestException("Agent rate limited", null, HttpStatusCode.TooManyRequests);
             }
 
@@ -49,14 +45,8 @@ public class OpenClawAgentClient : IAgentClient
             var result = await response.Content.ReadFromJsonAsync<AgentApiResponse>(cancellationToken: cancellationToken);
             return result?.TaskId ?? request.TaskId;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
-        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests)
-        {
-            throw;
-        }
+        catch (OperationCanceledException) { throw; }
+        catch (HttpRequestException ex) when (ex.StatusCode == HttpStatusCode.TooManyRequests) { throw; }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to submit task {TaskId} to agent", request.TaskId);
@@ -65,13 +55,11 @@ public class OpenClawAgentClient : IAgentClient
     }
 
     /// <summary>
-    /// Polls the agent for task status via GET /tasks/{taskId}.
-    /// Returns null if the task is still running, or a response with final status.
+    /// Polls GET /tasks/{taskId} for status. Returns null while running/queued.
     /// </summary>
     public async Task<AgentApiResponse?> GetTaskStatusAsync(string taskId, CancellationToken cancellationToken = default)
     {
         await ThrottleAsync(cancellationToken);
-
         using var client = _httpClientFactory.CreateClient(HttpClientNames.OpenClawApi);
 
         try
@@ -90,10 +78,7 @@ public class OpenClawAgentClient : IAgentClient
 
             return result;
         }
-        catch (OperationCanceledException)
-        {
-            throw;
-        }
+        catch (OperationCanceledException) { throw; }
         catch (Exception ex)
         {
             Log.Error(ex, "Failed to check status of agent task {TaskId}", taskId);
@@ -102,12 +87,36 @@ public class OpenClawAgentClient : IAgentClient
     }
 
     /// <summary>
-    /// Sends a cancellation request to the agent for a specific task.
+    /// Downloads file contents for a completed task via GET /tasks/{taskId}/files.
+    /// Returns files with base64 content — no filesystem access needed.
     /// </summary>
+    public async Task<AgentFilesResponse?> GetTaskFilesAsync(string taskId, CancellationToken cancellationToken = default)
+    {
+        await ThrottleAsync(cancellationToken);
+        using var client = _httpClientFactory.CreateClient(HttpClientNames.OpenClawApi);
+
+        try
+        {
+            var response = await client.GetAsync($"{_baseUrl}/tasks/{taskId}/files", cancellationToken);
+
+            if (response.StatusCode == HttpStatusCode.NotFound)
+                return null;
+
+            response.EnsureSuccessStatusCode();
+
+            return await response.Content.ReadFromJsonAsync<AgentFilesResponse>(cancellationToken: cancellationToken);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch (Exception ex)
+        {
+            Log.Error(ex, "Failed to fetch files for agent task {TaskId}", taskId);
+            return null;
+        }
+    }
+
     public async Task CancelTaskAsync(string taskId, CancellationToken cancellationToken = default)
     {
         using var client = _httpClientFactory.CreateClient(HttpClientNames.OpenClawApi);
-
         try
         {
             await client.DeleteAsync($"{_baseUrl}/tasks/{taskId}", cancellationToken);
@@ -119,9 +128,6 @@ public class OpenClawAgentClient : IAgentClient
         }
     }
 
-    /// <summary>
-    /// Enforces minimum interval between API requests to avoid overwhelming the agent.
-    /// </summary>
     private async Task ThrottleAsync(CancellationToken cancellationToken)
     {
         await _rateLimiter.WaitAsync(cancellationToken);
@@ -129,9 +135,7 @@ public class OpenClawAgentClient : IAgentClient
         {
             var elapsed = DateTime.UtcNow - _lastRequestTime;
             if (elapsed.TotalMilliseconds < MinRequestIntervalMs)
-            {
                 await Task.Delay(MinRequestIntervalMs - (int)elapsed.TotalMilliseconds, cancellationToken);
-            }
             _lastRequestTime = DateTime.UtcNow;
         }
         finally
