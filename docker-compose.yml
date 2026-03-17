@@ -1,37 +1,30 @@
 ﻿services:
+  # --------------------------------------------------------
+  # Discord Bot (C# .NET 9.0)
+  # --------------------------------------------------------
   discord-bot:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ahmanamjardir/laskbot:1.0
     container_name: discord-bot-ai
     restart: unless-stopped
     depends_on:
       openclaw:
         condition: service_started
-    
-    # Environment variables from .env file
     env_file:
       - .env
-    
-    # Agent connection settings (override defaults from AppSettings)
     environment:
       - OPENCLAW_BASE_URL=http://openclaw:8080
-      - AGENT_SHARED_VOLUME_PATH=/app/agent-output
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}
-      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-7}
+      - AGENT_MAX_RETRIES=${AGENT_MAX_RETRIES:-5}
       - AGENT_MAX_CONCURRENT_TASKS=${AGENT_MAX_CONCURRENT_TASKS:-2}
+      - GEMINI_MODEL=${GEMINI_MODEL:-gemini-3-flash-preview}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
-    
-    # Persistent volumes for data, logs and shared agent output
     volumes:
       - bot-data:/app/data
       - bot-logs:/app/logs
-      - agent-output:/app/agent-output:ro   # Read-only: bot only reads agent results
-    
+      # agent-output removed — files transferred via HTTP API
     networks:
       - bot-internal
-    
-    # Resource limits
+      - bot-external
     deploy:
       resources:
         limits:
@@ -40,85 +33,83 @@
         reservations:
           cpus: '0.25'
           memory: 128M
-    
-    # Graceful shutdown timeout
-    stop_grace_period: 30s
-    
-    # Security options
     security_opt:
       - no-new-privileges:true
     read_only: true
     tmpfs:
       - /tmp:size=64M
       - /home/botuser:size=16M
-    
-    # Logging configuration
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
+  # --------------------------------------------------------
+  # OpenClaw Agent (Python + .NET + Node)
+  # --------------------------------------------------------
   openclaw:
-    build:
-      context: .
-      dockerfile: Dockerfile.agent
+    image: ahmanamjardir/openclaw-agent:1.0
     container_name: openclaw-agent
+    user: root
     restart: unless-stopped
-    
-    # Agent API key from .env
     environment:
       - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY}
       - ANTHROPIC_MODEL=${ANTHROPIC_MODEL:-claude-sonnet-4-20250514}
       - PORT=8080
-      - MAX_ITERATIONS=${AGENT_MAX_RETRIES:-7}
+      - MAX_TOOL_ROUNDS=${MAX_TOOL_ROUNDS:-20}
+      - MAX_TOKENS=${MAX_TOKENS:-4096}
       - AGENT_SESSION_TIMEOUT_MINUTES=${AGENT_SESSION_TIMEOUT_MINUTES:-10}
       - MAX_CONCURRENT_TASKS=${AGENT_MAX_CONCURRENT_TASKS:-2}
       - WORKSPACE_DIR=/workspace
+      - MAX_INLINE_FILE_BYTES=${MAX_INLINE_FILE_BYTES:-10485760}
       - DOTNET_ROOT=/usr/share/dotnet
       - PATH=/opt/venv/bin:/usr/share/dotnet:$PATH
-    
-    # Agent writes results to shared volume
     volumes:
-      - agent-output:/workspace:rw
-    
+      - openclaw-workspace:/workspace 
     networks:
       - bot-internal
-    
-    # Resource limits (agent needs more CPU/memory for .NET/Python compilation)
+      - agent-external
     deploy:
       resources:
         limits:
-          cpus: '2.0'
-          memory: 2G
+          cpus: '1.0'
+          memory: 1536M
         reservations:
           cpus: '0.5'
           memory: 512M
-    
-    stop_grace_period: 15s
-    
-    # Security: no privilege escalation, no host network
-    security_opt:
-      - no-new-privileges:true
-    
-    # Logging
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 90s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
         max-file: "3"
 
-# Internal network - containers communicate without exposing ports to host
 networks:
   bot-internal:
     driver: bridge
     name: discord-bot-network
+    internal: true        
+  bot-external:
+    driver: bridge
+    name: discord-bot-external
+  agent-external:
+    driver: bridge
+    name: discord-agent-external
 
-# Named volumes for data persistence
+
 volumes:
   bot-data:
     name: discord-bot-data
+  bot-cache:
+    name: discord-bot-cache
   bot-logs:
     name: discord-bot-logs
-  agent-output:
-    name: discord-bot-agent-output
+  openclaw-workspace:
+    name: openclaw-workspace
+  

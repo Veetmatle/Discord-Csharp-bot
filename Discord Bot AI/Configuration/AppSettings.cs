@@ -1,4 +1,5 @@
 namespace Discord_Bot_AI.Configuration;
+
 /// <summary>
 /// Application settings container loaded from environment variables or config file.
 /// Immutable after creation for thread safety.
@@ -12,37 +13,32 @@ public sealed class AppSettings
     public string DataPath { get; init; } = "/app/data";
     public string CachePath { get; init; } = "/app/cache";
     public string LogPath { get; init; } = "/app/logs";
-    
+
     /// <summary>
     /// Base URL of the OpenClaw agent container API.
     /// </summary>
     public string OpenClawBaseUrl { get; init; } = "http://openclaw:8080";
-    
-    /// <summary>
-    /// Shared volume path where the agent writes output files.
-    /// </summary>
-    public string AgentSharedVolumePath { get; init; } = "/app/agent-output";
-    
+
     /// <summary>
     /// Maximum time in minutes before an agent task is forcefully terminated.
     /// </summary>
     public int AgentSessionTimeoutMinutes { get; init; } = 10;
-    
+
     /// <summary>
-    /// Maximum self-correction iterations the agent may attempt per task.
+    /// Maximum tool rounds the agent may use per task.
     /// </summary>
-    public int AgentMaxRetries { get; init; } = 7;
-    
+    public int AgentMaxRetries { get; init; } = 5;
+
     /// <summary>
     /// Maximum number of concurrent agent tasks in the queue.
     /// </summary>
     public int AgentMaxConcurrentTasks { get; init; } = 2;
-    
+
     /// <summary>
-    /// Anthropic Claude model identifier used by the OpenClaw agent (e.g. claude-sonnet-4-20250514).
+    /// Anthropic Claude model identifier used by the OpenClaw agent.
     /// </summary>
     public string AnthropicAgentModel { get; init; } = "claude-sonnet-4-20250514";
-    
+
     /// <summary>
     /// Creates AppSettings from an IConfigurationProvider.
     /// </summary>
@@ -58,9 +54,8 @@ public sealed class AppSettings
             CachePath = provider.GetValue("CACHE_PATH") ?? "/app/cache",
             LogPath = provider.GetValue("LOG_PATH") ?? "/app/logs",
             OpenClawBaseUrl = provider.GetValue("OPENCLAW_BASE_URL") ?? "http://openclaw:8080",
-            AgentSharedVolumePath = provider.GetValue("AGENT_SHARED_VOLUME_PATH") ?? "/app/agent-output",
             AgentSessionTimeoutMinutes = int.TryParse(provider.GetValue("AGENT_SESSION_TIMEOUT_MINUTES"), out var timeout) ? timeout : 10,
-            AgentMaxRetries = int.TryParse(provider.GetValue("AGENT_MAX_RETRIES"), out var retries) ? retries : 7,
+            AgentMaxRetries = int.TryParse(provider.GetValue("AGENT_MAX_RETRIES"), out var retries) ? retries : 5,
             AgentMaxConcurrentTasks = int.TryParse(provider.GetValue("AGENT_MAX_CONCURRENT_TASKS"), out var concurrent) ? concurrent : 2,
             AnthropicAgentModel = provider.GetValue("ANTHROPIC_MODEL") ?? "claude-sonnet-4-20250514"
         };
