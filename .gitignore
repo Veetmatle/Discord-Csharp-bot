@@ -1,0 +1,39 @@
+﻿# Build artifacts
+**/bin/
+**/obj/
+**/out/
+
+# IDE
+.idea/
+.vs/
+*.user
+*.suo
+*.csproj.user
+
+# Environment files (SECURITY - NEVER COMMIT!)
+.env
+*.env.local
+*.env.production
+
+# Config with secrets
+**/config.json
+
+# Logs
+**/logs/
+*.log
+
+# Cache
+**/Assets/Cache/
+
+# OS files
+Thumbs.db
+.DS_Store
+
+# Temporary files
+*.tmp
+*.bak
+*.swp
+*~
+
+# Docker volumes (local development)
+docker-data/

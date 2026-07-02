@@ -1,0 +1,106 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+    <PropertyGroup>
+        <OutputType>Exe</OutputType>
+        <TargetFramework>net9.0</TargetFramework>
+        <RootNamespace>Discord_Bot_AI</RootNamespace>
+        <ImplicitUsings>enable</ImplicitUsings>
+        <Nullable>enable</Nullable>
+    </PropertyGroup>
+
+    <ItemGroup>
+      <PackageReference Include="Discord.Net" Version="3.19.0-beta.1" />
+      <PackageReference Include="HtmlAgilityPack" Version="1.12.4" />
+      <PackageReference Include="Microsoft.Extensions.DependencyInjection" Version="10.0.2" />
+      <PackageReference Include="Microsoft.Extensions.Http" Version="10.0.2" />
+      <PackageReference Include="Microsoft.Extensions.Http.Polly" Version="9.0.0" />
+      <PackageReference Include="Mscc.GenerativeAI" Version="3.0.2" />
+      <PackageReference Include="Polly" Version="8.5.1" />
+      <PackageReference Include="Serilog" Version="4.2.0" />
+      <PackageReference Include="Serilog.Sinks.Console" Version="6.0.0" />
+      <PackageReference Include="Serilog.Sinks.File" Version="6.0.0" />
+      <PackageReference Include="SixLabors.ImageSharp" Version="3.1.12" />
+      <PackageReference Include="SixLabors.ImageSharp.Drawing" Version="2.1.7" />
+      <PackageReference Include="UglyToad.PdfPig" Version="1.7.0-custom-5" />
+    </ItemGroup>
+
+    <ItemGroup>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-ExtraBold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-Medium.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-Bold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-Black.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-Regular.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Cinzel static\Cinzel-SemiBold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Black.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-BlackItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Bold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-BoldItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-ExtraBold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-ExtraBoldItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-ExtraLight.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-ExtraLightItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Italic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Light.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-LightItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Medium.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-MediumItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Regular.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-SemiBold.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-SemiBoldItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-Thin.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+      <None Update="Assets\Fonts\Roboto static\RobotoCondensed-ThinItalic.ttf">
+        <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      </None>
+    </ItemGroup>
+
+    <ItemGroup>
+      <Folder Include="Assets\Fonts\" />
+    </ItemGroup>
+
+</Project>

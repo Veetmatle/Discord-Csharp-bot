@@ -1,0 +1,45 @@
+﻿# Build artifacts
+**/bin/
+**/obj/
+**/out/
+
+# IDE
+.idea/
+.vs/
+*.user
+*.suo
+
+# Dependencies
+**/node_modules/
+
+# Environment files (security)
+.env
+*.env.local
+
+# Logs
+**/logs/
+*.log
+
+# Cache
+**/Assets/Cache/
+
+# Config with secrets
+**/config.json
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+LICENSE
+
+# Test files
+**/tests/
+**/*.Tests/
+
+# Misc
+*.tmp
+*.bak
+Thumbs.db
+.DS_Store
